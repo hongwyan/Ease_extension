@@ -1,0 +1,26 @@
+{
+  "name": "x-feed-lens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome MV3 extension: one-click feed context for English text posts on X.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:unit": "vitest run",
+    "browsers": "node scripts/pw.mjs install chromium",
+    "test:e2e": "npm run build && node scripts/pw.mjs test",
+    "test": "npm run typecheck && npm run test:unit && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/chrome": "0.3.7",
+    "@types/jsdom": "30.0.0",
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "fake-indexeddb": "6.2.7",
+    "jsdom": "30.1.3",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

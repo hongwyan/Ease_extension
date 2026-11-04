@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X Feed Lens</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icons/icon-48.png" alt="" width="28" height="28" />
+        <h1>X Feed Lens</h1>
+      </header>
+      <p class="intro">
+        Measures how often a topic appears among the English text posts you actually see on your X
+        <strong>For you</strong> timeline, whether that changed since the previous week, and (optionally) whether
+        public interest in the same topic moved too. Click <strong>Feed context</strong> under a post to see it.
+      </p>
+
+      <section aria-labelledby="rec-h">
+        <h2 id="rec-h">Local recording</h2>
+        <p class="status" data-testid="rec-status" id="rec-status" role="status">Loading…</p>
+        <p class="muted" id="rec-stats" data-testid="rec-stats"></p>
+        <div class="row">
+          <button type="button" id="rec-toggle" data-testid="rec-toggle" class="primary">Enable recording on X</button>
+        </div>
+        <p class="muted">
+          A post counts once per tab session when at least half of it stays on screen for one second. Only post IDs,
+          author handles, matched topics and a short excerpt are stored, on this device, for 30 days.
+        </p>
+      </section>
+
+      <section aria-labelledby="pub-h">
+        <h2 id="pub-h">Public trend (optional)</h2>
+        <label class="check">
+          <input type="checkbox" id="pub-toggle" data-testid="pub-toggle" />
+          <span>
+            Look up English Wikipedia article views for tool topics. Only the article title (e.g. “ChatGPT”) and a date
+            range are sent to wikimedia.org — never post text, authors or your browsing.
+          </span>
+        </label>
+      </section>
+
+      <section aria-labelledby="del-h">
+        <h2 id="del-h">Delete data</h2>
+        <p class="muted">Removes all recorded history, excerpts and cached public data from this device.</p>
+        <div class="row">
+          <button type="button" id="del" data-testid="del" class="danger">Delete all data…</button>
+          <button type="button" id="del-confirm" data-testid="del-confirm" class="danger" hidden>Yes, delete everything</button>
+          <button type="button" id="del-cancel" hidden>Cancel</button>
+        </div>
+        <p class="muted" id="del-msg" data-testid="del-msg" role="status"></p>
+      </section>
+    </main>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>
