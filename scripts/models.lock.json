@@ -1,0 +1,170 @@
+{
+  "comment": "Pinned local encoder assets. `npm run model:fetch` downloads them into .cache/models (outside dist) and verifies every SHA-256. The build copies the `release` model into dist/models and fails if any file is missing or altered.",
+  "release": "onnx-community/gte-multilingual-base",
+  "models": {
+    "Xenova/paraphrase-multilingual-MiniLM-L12-v2": {
+      "revision": "2c4055b12046f11709e9df2c122e59ffbdc2f900",
+      "upstream": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "upstreamRevision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
+      "license": "Apache-2.0",
+      "files": {
+        "config.json": {
+          "size": 673,
+          "sha256": "05b570bff786faa5c4604152aa16f19f77ed6dfc31e47dd0f3dd987078693ac7"
+        },
+        "tokenizer.json": {
+          "size": 17082913,
+          "sha256": "b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441"
+        },
+        "tokenizer_config.json": {
+          "size": 496,
+          "sha256": "3f5961b9ac86288cccdb97f32fb848d6187c78e1603958c53f3ea1f296b7d8a2"
+        },
+        "special_tokens_map.json": {
+          "size": 280,
+          "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f"
+        },
+        "onnx/model_quantized.onnx": {
+          "size": 118308126,
+          "sha256": "66fc00f5f29afcaff34092e1bdd20008ca3918265a82fb9695a551e510cc4ebc"
+        }
+      }
+    },
+    "Xenova/multilingual-e5-small": {
+      "revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+      "upstream": "intfloat/multilingual-e5-small",
+      "upstreamRevision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "license": "MIT",
+      "files": {
+        "config.json": {
+          "size": 658,
+          "sha256": "cb99455288675345e1a4f411438d5d0adbba5fbd3a67ea4fb03c015433b996c1"
+        },
+        "tokenizer.json": {
+          "size": 17082730,
+          "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+        },
+        "tokenizer_config.json": {
+          "size": 443,
+          "sha256": "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b"
+        },
+        "special_tokens_map.json": {
+          "size": 167,
+          "sha256": "d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7"
+        },
+        "onnx/model_quantized.onnx": {
+          "size": 118308185,
+          "sha256": "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193"
+        }
+      }
+    },
+    "onnx-community/granite-embedding-97m-multilingual-r2-ONNX": {
+      "revision": "536a9f241cb3f02a9c5995a1e708c784bd274859",
+      "upstream": "ibm-granite/granite-embedding-97m-multilingual-r2",
+      "license": "Apache-2.0",
+      "files": {
+        "config.json": {
+          "size": 1215,
+          "sha256": "ae74d55a56f779774cb9a8e63d3c2da9ae1af83c00229ffdff43d0b38407a0ee"
+        },
+        "special_tokens_map.json": {
+          "size": 871,
+          "sha256": "013787ee251ff611722479197c00853b62113ad303cb0a36524231783c676c69"
+        },
+        "tokenizer_config.json": {
+          "size": 12860,
+          "sha256": "6ed69389e30a8ecabfce2f9ebcdf0c908b34056f24d994340f2f216521c057d5"
+        },
+        "tokenizer.json": {
+          "size": 25301671,
+          "sha256": "51947676cae1f991fa51c6b9a24e14ee5460e5f0b9f692f13bb3159829d1592a"
+        },
+        "onnx/model_quantized.onnx": {
+          "size": 97858099,
+          "sha256": "704c1ebca5fbb7cd83ced41827658ac4c9990c64f7f2874d22b78044e5022e22"
+        }
+      }
+    },
+    "Xenova/paraphrase-multilingual-mpnet-base-v2": {
+      "revision": "e5d116277351513fd260955ece953ecddde7046e",
+      "upstream": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+      "license": "Apache-2.0",
+      "files": {
+        "config.json": {
+          "size": 751,
+          "sha256": "14533f158fb2476510b3a83256386b983daa8cfa799ea35217c89947be63835e"
+        },
+        "special_tokens_map.json": {
+          "size": 280,
+          "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f"
+        },
+        "tokenizer_config.json": {
+          "size": 418,
+          "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15"
+        },
+        "tokenizer.json": {
+          "size": 17082913,
+          "sha256": "b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441"
+        },
+        "onnx/model_quantized.onnx": {
+          "size": 278647663,
+          "sha256": "280b5fe103cc79d891d672f47826067835b7feed8b0b1865e34ed38f21719b49"
+        }
+      }
+    },
+    "onnx-community/gte-multilingual-base": {
+      "revision": "2edbf5e672aab465f9ed4c154a8b61791c082c69",
+      "upstream": "Alibaba-NLP/gte-multilingual-base",
+      "license": "Apache-2.0",
+      "files": {
+        "config.json": {
+          "size": 1648,
+          "sha256": "6ef2538d4286a7cd18d05225f659d8a1bceca7adb01c186868e53dbd4f822e17"
+        },
+        "special_tokens_map.json": {
+          "size": 964,
+          "sha256": "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835"
+        },
+        "tokenizer_config.json": {
+          "size": 1149,
+          "sha256": "24cebbf2ef20fc317256e03e52ac7b2ca326586f946a8427ecac036332bf0933"
+        },
+        "tokenizer.json": {
+          "size": 17082734,
+          "sha256": "3a56def25aa40facc030ea8b0b87f3688e4b3c39eb8b45d5702b3a1300fe2a20"
+        },
+        "onnx/model_quantized.onnx": {
+          "size": 340318797,
+          "sha256": "ab2bd164ebd8ca9003dc49a981b611e849b5d326f504c8873ba76e07fa6c0082"
+        }
+      }
+    },
+    "Snowflake/snowflake-arctic-embed-m-v2.0": {
+      "revision": "95c2741480856aa9666782eb4afe11959938017f",
+      "upstream": "Snowflake/snowflake-arctic-embed-m-v2.0",
+      "license": "Apache-2.0",
+      "files": {
+        "config.json": {
+          "size": 971,
+          "sha256": "2e0b386e7a826903b06c301f8d4dde2ac6279f7ccd3ea11f3911019a1ee0bc05"
+        },
+        "special_tokens_map.json": {
+          "size": 964,
+          "sha256": "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835"
+        },
+        "tokenizer_config.json": {
+          "size": 1340,
+          "sha256": "6f00514620aff01ba8b7291b2394e98daca5be264cb743805232d9ae27494b2a"
+        },
+        "tokenizer.json": {
+          "size": 17083009,
+          "sha256": "f1cc44ad7faaeec47241864835473fd5403f2da94673f3f764a77ebcb0a803ec"
+        },
+        "onnx/model_quantized.onnx": {
+          "size": 310916060,
+          "sha256": "03d923bb1850ebdccb068e2f3abd8aa43fe81c50d07d037ef103fe3d0fb78e3b"
+        }
+      }
+    }
+  }
+}

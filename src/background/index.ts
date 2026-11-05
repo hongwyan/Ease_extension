@@ -1,20 +1,25 @@
 import { CATALOG_VERSION } from "../shared/catalog";
 import { classify } from "../shared/classify";
 import {
+  MAX_TEXT,
   makeExcerpt,
   validateMessage,
   type ExposureResult,
   type PanelResponse,
   type RequestMessage,
+  type SemanticResponse,
   type StatusResponse,
   type TrendResponse,
 } from "../shared/messages";
 import { comparisonPeriods, computeScopedMetrics } from "../shared/metrics";
 import { getSettings, patchSettings } from "../shared/settings";
-import { FeedStore } from "./db";
+import { FeedStore, TEXT_VERSION } from "./db";
+import { offscreenEncoder, releaseEncoder } from "./offscreenClient";
+import { SemanticService } from "./semantic";
 import { TrendService } from "./trend";
 
 const store = new FeedStore();
+const semantic = new SemanticService({ store, encoder: offscreenEncoder, now: () => Date.now() });
 const trends = new TrendService({
   store,
   fetch: (input, init) => fetch(input, init),
@@ -57,6 +62,9 @@ async function handle(msg: RequestMessage): Promise<unknown> {
           ts: now,
           topics,
           excerpt: makeExcerpt(msg.text),
+          // Bounded visible text for local semantic analysis (no inference on this path).
+          text: msg.text.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT),
+          textVersion: TEXT_VERSION,
           catalogVersion: CATALOG_VERSION,
           lang: msg.lang,
         },
@@ -69,10 +77,18 @@ async function handle(msg: RequestMessage): Promise<unknown> {
     }
     case "panel": {
       const { previous } = comparisonPeriods(now);
-      const [rows, meta] = await Promise.all([store.exposuresSince(previous.start, now), store.getMeta()]);
-      const metrics = computeScopedMetrics(rows, msg.topicIds, msg.lang, now, meta.trackingSince, meta.pauses);
+      const [rows, meta, counts] = await Promise.all([store.exposuresSince(previous.start, now), store.getMeta(), store.countExposures()]);
+      const metrics = computeScopedMetrics(rows, msg.topicIds, msg.lang, now, meta.trackingSince, meta.pauses, counts.count);
       const res: PanelResponse = { ok: true, metrics };
       return res;
+    }
+    case "semantic": {
+      const res: SemanticResponse = { ok: true, requestId: msg.requestId, state: semantic.request(msg) };
+      return res;
+    }
+    case "semanticCancel": {
+      const state = semantic.cancel(msg.requestId, msg.keepPartial);
+      return { ok: true, requestId: msg.requestId, state: state ?? { phase: "cancelled" } } satisfies SemanticResponse;
     }
     case "trend": {
       const res: TrendResponse = { ok: true, result: await trends.lookup(msg.topicId) };
@@ -80,7 +96,12 @@ async function handle(msg: RequestMessage): Promise<unknown> {
     }
     case "status": {
       await store.prune(now);
-      const [{ count, oldest }, meta, s] = await Promise.all([store.countExposures(), store.getMeta(), getSettings()]);
+      const [{ count, oldest }, meta, s, embeddings] = await Promise.all([
+        store.countExposures(),
+        store.getMeta(),
+        getSettings(),
+        store.countEmbeddings(),
+      ]);
       const res: StatusResponse = {
         ok: true,
         retained: count,
@@ -89,13 +110,17 @@ async function handle(msg: RequestMessage): Promise<unknown> {
         epoch: meta.epoch,
         recording: meta.recording,
         publicLookups: s.publicLookups,
+        embeddings,
       };
       return res;
     }
     case "clear":
       return locked(async () => {
         const epoch = await store.clearAll(now);
+        // Cancel queued/in-flight analysis and drop in-memory vectors; free the model too.
+        semantic.reset(epoch);
         await patchSettings({ epoch });
+        void releaseEncoder();
         return { ok: true, epoch };
       });
     case "setSettings":
@@ -124,7 +149,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   const allowed =
     msg.type === "exposure"
       ? fromXTab
-      : msg.type === "panel" || msg.type === "trend"
+      : msg.type === "panel" || msg.type === "trend" || msg.type === "semantic" || msg.type === "semanticCancel"
         ? fromXTab || fromExtensionPage
         : fromExtensionPage;
   if (!allowed) {

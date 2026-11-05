@@ -15,6 +15,16 @@ export interface StoredExposure {
   topics: string[];
   excerpt: string;
   lang?: string;
+  text?: string;
+  textVersion?: number;
+}
+
+export interface LaunchOptions {
+  /** Extension folder to load (default: the built release, dist/). */
+  dist?: string;
+  /** Reuse a profile folder (upgrade tests); otherwise a fresh temporary profile. */
+  profile?: string;
+  args?: string[];
 }
 
 export type WikiHandler = (route: Route) => Promise<void> | void;
@@ -33,19 +43,21 @@ export class Harness {
   private constructor(
     readonly ctx: BrowserContext,
     readonly extId: string,
-    private readonly profile: string,
+    readonly profile: string,
+    private readonly keepProfile: boolean,
   ) {}
 
-  static async launch(): Promise<Harness> {
-    const profile = mkdtempSync(join(tmpdir(), "xfl-e2e-"));
+  static async launch(opts: LaunchOptions = {}): Promise<Harness> {
+    const dist = opts.dist ?? DIST;
+    const profile = opts.profile ?? mkdtempSync(join(tmpdir(), "xfl-e2e-"));
     const ctx = await chromium.launchPersistentContext(profile, {
       channel: "chromium",
       headless: true,
       viewport: { width: 1280, height: 800 },
-      args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
+      args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...(opts.args ?? [])],
     });
     const sw = ctx.serviceWorkers()[0] ?? (await ctx.waitForEvent("serviceworker"));
-    const h = new Harness(ctx, new URL(sw.url()).host, profile);
+    const h = new Harness(ctx, new URL(sw.url()).host, profile, !!opts.profile);
     await ctx.route("https://x.com/**", async (route) => {
       const url = new URL(route.request().url());
       h.xRequests.push(url.pathname);
@@ -69,6 +81,7 @@ export class Harness {
 
   async close(): Promise<void> {
     await this.ctx.close();
+    if (this.keepProfile) return;
     try {
       rmSync(this.profile, { recursive: true, force: true });
     } catch {
@@ -124,6 +137,33 @@ export class Harness {
     return rows;
   }
 
+  async embeddingCount(): Promise<number> {
+    const p = await this.ctx.newPage();
+    await p.goto(`chrome-extension://${this.extId}/popup.html`);
+    const n = await p.evaluate(
+      () =>
+        new Promise<number>((resolve, reject) => {
+          const req = indexedDB.open("x-feed-lens");
+          req.onsuccess = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains("embeddings")) {
+              db.close();
+              return resolve(-1);
+            }
+            const c = db.transaction("embeddings", "readonly").objectStore("embeddings").count();
+            c.onsuccess = () => {
+              resolve(c.result);
+              db.close();
+            };
+            c.onerror = () => reject(c.error);
+          };
+          req.onerror = () => reject(req.error);
+        }),
+    );
+    await p.close();
+    return n;
+  }
+
   async statusIds(): Promise<string[]> {
     return (await this.exposures()).map((r) => r.statusId).sort();
   }
@@ -172,6 +212,27 @@ export function button(page: Page, id: string) {
 
 export function panel(page: Page) {
   return page.locator("x-feed-lens-panel .panel");
+}
+
+/** Selects a view in the open panel: "semantic" or a catalog topic ID. */
+export async function chooseMode(page: Page, mode: string): Promise<void> {
+  const chip = panel(page).getByTestId(`fl-mode-${mode}`);
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+}
+
+/** Waits until the semantic view leaves its progress state; returns which final state it shows. */
+export async function semanticOutcome(page: Page, timeout = 120_000): Promise<string> {
+  const finals = ["fl-sem-metrics", "fl-sem-empty", "fl-sem-insufficient", "fl-sem-error", "fl-sem-cancelled"];
+  const sel = finals.map((t) => `[data-testid="${t}"]`).join(", ");
+  const el = panel(page).locator(sel).first();
+  await el.waitFor({ state: "attached", timeout });
+  return (await el.getAttribute("data-testid"))!;
+}
+
+/** Seed row with v0.3 analysis text. */
+export function textRow(statusId: string, author: string, ts: number, text: string, lang = "en", sessionId = "33333333-3333-4333-8333-333333333333") {
+  return { sessionId, statusId, author, ts, topics: [] as string[], excerpt: text.slice(0, 140), lang, text, textVersion: 1 };
 }
 
 /**

@@ -173,11 +173,24 @@ export interface PanelMetrics {
   /** All eligible exposures (the denominator) per period. */
   currentTotal: number;
   previousTotal: number;
-  /** Eligible exposures in the current period that matched no catalog topic. */
+  /** Eligible exposures in the current period that matched no catalog topic (catalog coverage diagnostics). */
   unmatchedCurrent: number;
-  /** Total retained exposures (≤ 30 days). */
-  retainedTotal: number;
   topics: TopicMetrics[];
+}
+
+/** Period bounds plus partial/paused annotations for the two comparison periods. */
+export function periodInfos(
+  now: number,
+  trackingSince: number | null,
+  pauses: PauseInterval[] = [],
+): { current: PeriodInfo; previous: PeriodInfo } {
+  const { current, previous } = comparisonPeriods(now);
+  const observedFrom = trackingSince ?? now;
+  const info = (p: Period, ongoing: boolean): PeriodInfo => {
+    const pausedDuring = pauses.some((x) => x.from < Math.min(p.end, now) && (x.to ?? now) > p.start);
+    return { ...p, partial: observedFrom > p.start || pausedDuring, pausedDuring, ongoing, observedFrom };
+  };
+  return { current: info(current, true), previous: info(previous, false) };
 }
 
 export function computePanelMetrics(
@@ -187,14 +200,9 @@ export function computePanelMetrics(
   trackingSince: number | null,
   pauses: PauseInterval[] = [],
 ): PanelMetrics {
-  const { current, previous } = comparisonPeriods(now);
-  const cur = rows.filter((r) => inPeriod(r.ts, current) && r.ts <= now);
-  const prev = rows.filter((r) => inPeriod(r.ts, previous));
-  const observedFrom = trackingSince ?? now;
-  const info = (p: Period, ongoing: boolean): PeriodInfo => {
-    const pausedDuring = pauses.some((x) => x.from < Math.min(p.end, now) && (x.to ?? now) > p.start);
-    return { ...p, partial: observedFrom > p.start || pausedDuring, pausedDuring, ongoing, observedFrom };
-  };
+  const infos = periodInfos(now, trackingSince, pauses);
+  const cur = rows.filter((r) => inPeriod(r.ts, infos.current) && r.ts <= now);
+  const prev = rows.filter((r) => inPeriod(r.ts, infos.previous));
 
   const topics = topicIds.map((topicId): TopicMetrics => {
     const curTopic = cur.filter((r) => r.topics.includes(topicId));
@@ -218,12 +226,11 @@ export function computePanelMetrics(
 
   return {
     now,
-    current: info(current, true),
-    previous: info(previous, false),
+    current: infos.current,
+    previous: infos.previous,
     currentTotal: cur.length,
     previousTotal: prev.length,
     unmatchedCurrent: cur.filter((r) => r.topics.length === 0).length,
-    retainedTotal: rows.length,
     topics,
   };
 }
@@ -235,6 +242,8 @@ export function round1(x: number): number {
 export interface ScopedMetrics {
   /** The clicked post's language. */
   lang: string;
+  /** All retained exposures (every language, last 30 days), counted at the source. */
+  retainedTotal: number;
   /** Metrics where every denominator is posts in `lang` only. */
   language: PanelMetrics;
   /** Metrics where every denominator is posts in all languages. */
@@ -249,9 +258,11 @@ export function computeScopedMetrics(
   now: number,
   trackingSince: number | null,
   pauses: PauseInterval[] = [],
+  retainedTotal = rows.length,
 ): ScopedMetrics {
   return {
     lang,
+    retainedTotal,
     language: computePanelMetrics(
       rows.filter((r) => langOf(r) === lang),
       topicIds,

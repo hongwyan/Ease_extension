@@ -1,16 +1,20 @@
 {
   "name": "x-feed-lens",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Chrome MV3 extension: one-click feed context for English text posts on X.",
+  "description": "Chrome MV3 extension: one-click feed context for X posts, with a local multilingual text encoder.",
   "type": "module",
   "scripts": {
+    "model:fetch": "node scripts/fetch-model.mjs",
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:unit": "vitest run",
+    "eval:semantic": "npm run build && node scripts/semantic-eval.mjs browser",
+    "eval:candidates": "node scripts/fetch-model.mjs --all && node scripts/semantic-eval.mjs node",
     "browsers": "node scripts/pw.mjs install chromium",
     "test:e2e": "npm run build && node scripts/pw.mjs test",
-    "test": "npm run typecheck && npm run test:unit && npm run test:e2e"
+    "bench": "npm run build && node scripts/pw.mjs test --config playwright.bench.config.ts",
+    "test": "npm run typecheck && npm run test:unit && npm run eval:semantic && node scripts/pw.mjs test"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
@@ -22,5 +26,8 @@
     "jsdom": "30.1.3",
     "typescript": "7.0.2",
     "vitest": "5.1.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2"
   }
 }

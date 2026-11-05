@@ -1,12 +1,35 @@
 // Reproducible release build: `npm ci && npm run build` → dist/ (manifest at the root).
 import { build } from "esbuild";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(root, "dist");
+
+// --- Mandatory local encoder assets (pinned in scripts/models.lock.json, fetched by `npm run model:fetch`). ---
+const lock = JSON.parse(readFileSync(join(root, "scripts/models.lock.json"), "utf8"));
+const releaseId = lock.release;
+const release = lock.models[releaseId];
+const modelSrc = readFileSync(join(root, "src/semantic/model.ts"), "utf8");
+if (!modelSrc.includes(`modelId: "${releaseId}"`) || !modelSrc.includes(`revision: "${release.revision}"`)) {
+  fail(`src/semantic/model.ts RELEASE_ENCODER does not match the lock's release model ${releaseId}@${release.revision}.`);
+}
+const cacheDir = join(root, ".cache", "models", release.revision, releaseId);
+for (const [file, spec] of Object.entries(release.files)) {
+  const p = join(cacheDir, file);
+  if (!existsSync(p)) fail(`Missing encoder asset ${releaseId}/${file}. Run \`npm run model:fetch\` first.`);
+  if (statSync(p).size !== spec.size || (await sha256(p)) !== spec.sha256) {
+    fail(`Encoder asset ${releaseId}/${file} does not match its pinned SHA-256. Delete it and run \`npm run model:fetch\`.`);
+  }
+}
+// CPU/WASM runtime: the WASM binary and its matching Emscripten loader from the pinned onnxruntime-web.
+const ORT_FILES = ["ort-wasm-simd-threaded.wasm", "ort-wasm-simd-threaded.mjs"];
+const ortDir = join(root, "node_modules/onnxruntime-web/dist");
+for (const f of ORT_FILES) if (!existsSync(join(ortDir, f))) fail(`Missing ONNX Runtime file ${f}. Run \`npm ci\`.`);
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "icons"), { recursive: true });
@@ -24,6 +47,16 @@ const common = {
 await build({ ...common, entryPoints: [join(root, "src/content/index.ts")], outfile: join(out, "content.js"), format: "iife" });
 await build({ ...common, entryPoints: [join(root, "src/background/index.ts")], outfile: join(out, "background.js"), format: "esm" });
 await build({ ...common, entryPoints: [join(root, "src/popup/popup.ts")], outfile: join(out, "popup.js"), format: "esm" });
+await build({ ...common, entryPoints: [join(root, "src/offscreen/offscreen.ts")], outfile: join(out, "offscreen.js"), format: "esm" });
+// Inference worker: Transformers.js with the CPU/WASM-only ONNX Runtime build (no WebGPU/JSEP code or binaries).
+await build({
+  ...common,
+  entryPoints: [join(root, "src/semantic/worker.ts")],
+  outfile: join(out, "semantic-worker.js"),
+  format: "esm",
+  alias: { "onnxruntime-web/webgpu": "onnxruntime-web/wasm" },
+  logOverride: { "empty-import-meta": "silent" },
+});
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const manifest = JSON.parse(readFileSync(join(root, "static/manifest.json"), "utf8"));
@@ -31,10 +64,33 @@ manifest.version = pkg.version;
 writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 cpSync(join(root, "static/popup.html"), join(out, "popup.html"));
 cpSync(join(root, "static/popup.css"), join(out, "popup.css"));
+cpSync(join(root, "static/offscreen.html"), join(out, "offscreen.html"));
+mkdirSync(join(out, "ort"), { recursive: true });
+for (const f of ORT_FILES) cpSync(join(ortDir, f), join(out, "ort", f));
+for (const file of Object.keys(release.files)) {
+  mkdirSync(dirname(join(out, "models", releaseId, file)), { recursive: true });
+  cpSync(join(cacheDir, file), join(out, "models", releaseId, file));
+}
+writeFileSync(
+  join(out, "models", "MODEL_INFO.json"),
+  `${JSON.stringify({ model: releaseId, revision: release.revision, upstream: release.upstream, upstreamRevision: release.upstreamRevision, license: release.license, files: release.files, onnxRuntime: ORT_FILES }, null, 2)}
+`,
+);
 
 for (const size of [16, 32, 48, 128]) writeFileSync(join(out, "icons", `icon-${size}.png`), lensIcon(size));
 
 console.log(`Built X Feed Lens ${pkg.version} → ${out}`);
+
+function fail(message) {
+  console.error(`Build failed: ${message}`);
+  process.exit(1);
+}
+
+async function sha256(path) {
+  const h = createHash("sha256");
+  await pipeline(createReadStream(path), h);
+  return h.digest("hex");
+}
 
 // --- Deterministic PNG icon (blue disc with a white magnifier), no image dependencies. ---
 function lensIcon(size) {

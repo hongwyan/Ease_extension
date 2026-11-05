@@ -1,0 +1,86 @@
+# Ease Extension — Semantic Feed Context Upgrade
+
+## Objective and review baseline
+
+Upgrade the existing extension in `D:/Github/Ease_extension` so clicking **Feed context** on an arbitrary text post finds meaningfully related posts in recorded history, including Chinese and English paraphrases. Deliver working code and a tested unpacked release. The primary result should be useful beyond ChatGPT, Claude, and AI earnings, without asking the user to enter a prompt or configure an API key.
+
+This plan follows source inspection on November 5, 2026. `npm run typecheck` passed. `npm run test:unit` passed 152 tests across eight files. Browser tests and live X behavior were not executed during this review. The implementation agent must rerun checks against the current checkout and inspect intervening changes before editing.
+
+Default architecture decision: local multilingual embeddings, packaged with the extension, with query-relative retrieval. This adds model size and first-analysis latency. Model quality and browser compatibility remain to be verified. A successful build alone will not establish either.
+
+## Findings and exact change surfaces
+
+| Reviewed source | Finding and required change |
+| --- | --- |
+| [catalog.ts](D:/Github/Ease_extension/src/shared/catalog.ts), [classify.ts](D:/Github/Ease_extension/src/shared/classify.ts) | The catalog has three topics. Multilingual aliases expand vocabulary but still map into those three IDs. Keep these explicit topic definitions for optional named-topic views and public mappings. Add open-ended semantic retrieval for the primary view. |
+| [messages.ts](D:/Github/Ease_extension/src/shared/messages.ts), [content/index.ts](D:/Github/Ease_extension/src/content/index.ts) | `PanelRequest` carries only catalog topic IDs and language. Validation rejects arbitrary IDs. A semantic request needs the clicked post ID, bounded visible text, language, and request identity. Retain separate validation for catalog trend requests. |
+| [background/index.ts](D:/Github/Ease_extension/src/background/index.ts), [db.ts](D:/Github/Ease_extension/src/background/db.ts) | Exposure messages contain up to 4,000 characters, but persistence keeps only a 140-character excerpt and fixed topic IDs. Add bounded analysis text for new records and migrate safely. The current version-1 upgrade handler creates all stores unconditionally and needs version-aware branches before adding stores. |
+| [metrics.ts](D:/Github/Ease_extension/src/shared/metrics.ts) | Shares depend on `topics.includes(topicId)`. Reuse period and repeated-source calculations with an explicit relatedness result. `retainedTotal` currently equals the supplied row count, while the panel caller fetches only the comparison window. Obtain a true 30-day count or relabel this field. |
+| [panel.ts](D:/Github/Ease_extension/src/content/ui/panel.ts), [interpret.ts](D:/Github/Ease_extension/src/shared/interpret.ts) | `unknownSection()` and `interpretUnknown()` turn all unmatched posts into a displayed percentage. This is classification coverage, not evidence that those posts discuss the same subject. Replace this primary result with semantic analysis and explicit analysis states. |
+| [tracker.ts](D:/Github/Ease_extension/src/content/tracker.ts), [xAdapter.ts](D:/Github/Ease_extension/src/content/xAdapter.ts) | Exposure capture already handles dwell, foreground visibility, outer-post identity, and session deduplication. Keep inference off this path. The X interface must currently be English even though post text may use other languages. |
+| [settings.ts](D:/Github/Ease_extension/src/shared/settings.ts), [popup.html](D:/Github/Ease_extension/static/popup.html) | Deletion epochs and recording controls already exist. Extend deletion to text, embeddings, pending jobs, and displayed results. Update the disclosure that currently promises storage of short excerpts only. |
+| [build.mjs](D:/Github/Ease_extension/scripts/build.mjs), [manifest.json](D:/Github/Ease_extension/static/manifest.json), [extension.spec.ts](D:/Github/Ease_extension/tests/e2e/extension.spec.ts) | Build currently emits three bundles. CSP lacks local WASM support. Browser tests hard-code permissions, CSP, catalog-default selection, and unmatched-topic wording. Update these intentional contracts and retain their behavioral checks. |
+
+## User-visible behavior
+
+1. Clicking any eligible post opens its existing panel immediately. Show a short excerpt of the selected post so the analysis target is clear. Primary heading is **Similar to this post**. Automatically run semantic comparison. No typing, topic creation, or manual selection is required.
+2. Show **Related recorded posts**, current and previous counts, percentage-point change, repeated authors, and representative matching posts. Keep same-language and all-language scopes. Explain that relatedness is an estimate based on text meaning. Opposing opinions about the same subject can both match.
+3. Use the label **Other recorded posts** for semantic denominators. Exclude every exposure with the clicked status ID from both numerator and denominator in both periods. This prevents a newly clicked post from proving its own prevalence. Other repeated exposures remain counted once per existing session rules; inference can reuse their vectors.
+4. Existing catalog matches may appear as secondary topic chips. These retain their existing catalog-defined scope and denominators. Make the selected mode clear, and keep Wikipedia lookups attached to exact catalog mappings. Arbitrary semantic queries have no automatically inferred public series.
+5. Remove the prominent **No catalog topic 100%** result. Unmatched-catalog coverage may remain in diagnostics, clearly described as coverage. Empty history, no related matches, insufficient text, partial indexing, and inference failure must each have distinct states. Never turn an inference failure into a zero-match claim.
+6. The panel remains responsive during analysis and supports keyboard navigation, focus restoration, themes, retry, and reopening. A result from a previously selected post must never replace the current result. Opening or retrying analysis never records an exposure.
+
+## Architecture and model decision
+
+Add a small semantic layer with an encoder interface, scoring functions, and a query coordinator. Start by evaluating a pinned ONNX export of `Xenova/paraphrase-multilingual-MiniLM-L12-v2` through a pinned stable Transformers.js release. This is a candidate to benchmark, not a verified quality guarantee. Confirm license, tokenizer, output dimensions, pooling, normalization, maximum input length, and quantized CPU behavior before adopting it. A replacement multilingual model is acceptable when evaluation justifies it.
+
+Use an extension-owned offscreen document to host a dedicated worker for inference. The service worker validates incoming requests, owns persistence and job coordination, and routes work to that runtime. Serialize offscreen creation, route internal messages to a single intended receiver, and validate senders. Jobs need explicit IDs, bounded batches, cancellation, progress, timeout, and recoverable failure. Account for service-worker restart and offscreen disposal. Release the inference worker after idle time rather than holding model memory indefinitely. [Chrome offscreen documentation](https://developer.chrome.com/docs/extensions/reference/api/offscreen)
+
+Ship tokenizer, configuration, model weights, WASM, and runtime JavaScript as local assets in the unpacked release. Pin revisions and verify download checksums in a reproducible preparation step; cache assets outside `dist`, which the existing build deletes. Fail a release build clearly when mandatory assets are absent. Disable remote model loading and CDN runtime defaults. Configure extension CSP for local assets and WASM, retain scoped network access for existing public lookups, and use a verified CPU/WASM path. GPU acceleration is optional only after CPU correctness is established. [Transformers.js local asset configuration](https://huggingface.co/docs/transformers.js/custom_usage) · [Chrome extension CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy)
+
+A worker-based proof using the real packaged model in a loaded MV3 extension is the first implementation milestone. Measure cold initialization and actual inference before completing integration. Never substitute a mock encoder or keyword overlap for the release encoder.
+
+## Data migration and indexing
+
+- Preserve existing history. Store analysis text up to the current `MAX_TEXT` bound for new exposures, with a text-source/version field. Keep a separate short display excerpt. Capture only already-visible outer-post text. Explain local text retention in the popup and README.
+- For existing rows, use the retained excerpt and label their contribution as **older records analyzed from excerpts**. Missing language retains the existing legacy English interpretation. Missing or content-free text is unassessable, not unrelated. Do not fetch old posts to reconstruct missing text.
+- Create an embedding store using incremental database migration. Key entries by a hash of normalized input plus model revision, tokenizer/preprocessing version, pooling, and chunking policy. A model or text change must invalidate incompatible embeddings. Do not overwrite historical catalog assignments with query-specific labels.
+- Deduplicate encoding by text identity while retaining exposure-level counting. Specify a bounded long-text policy using the actual tokenizer budget. For chunked input, document aggregation and calibrate it on long-post examples. Report truncation or excerpt use rather than implying complete context was read.
+- Use cached embeddings first. Index missing history incrementally in small batches, with progress and cancellation. Indexing must not delay exposure persistence. Compare all assessable rows in the selected windows, not merely the nearest K candidates. Top-K retrieval is appropriate for displaying evidence, not counting prevalence.
+- All writes must recheck the deletion epoch inside the same persistence transaction. Delete history, analysis text, embeddings, and personal caches together. Cancel queued work and discard stale in-flight results. Age out derived data with its underlying 30-day history and remove orphaned cache entries. Generic bundled model files are separate from user data; explain that distinction in deletion copy.
+- After a worker restart, reconstruct work from durable state. Concurrency, duplicate messages, and two open X tabs must not create duplicate records, duplicate model instances, or conflicting cache writes.
+
+## Relatedness and statistics contract
+
+Use the same query representation and model version for both comparison periods. Cosine similarity can generate candidates; its cutoff must come from labeled evaluation. A score such as 0.8 is not an 80% probability. Keep thresholds and preprocessing versioned. Do not force every post to have a match, broaden a cutoff to produce attractive results, or infer agreement from topical similarity.
+
+For each period and language scope return separate counts for eligible other exposures, assessed exposures, related exposures, unassessable exposures, and pending exposures. The displayed semantic percentage is related / assessed, explicitly labeled **of analyzed other posts**. Also show coverage as assessed / eligible. Where all are assessed, the same denominator naturally covers all eligible other exposures. Pending work must never silently count as a negative.
+
+Reuse the existing local-calendar seven-day boundaries, partial-period notes, pause history, and 20-exposure direction floor. Require at least 20 assessed exposures in each period and completed assessment of all eligible other rows before directional wording. If some text cannot be assessed, show the available counts and coverage and suppress the headline change. Preserve useful catalog results if semantic initialization fails.
+
+Evidence must come from actual matching retained posts. Display up to three distinct status IDs with working permalinks. Explain current-post exclusion, excerpt-only history, partial coverage, and repeat-author coverage under **Why this result?**. Avoid fabricated topic names or external trends. A generative model is unnecessary for this release.
+
+## Implementation sequence
+
+1. Reinspect current code and repository instructions, record baseline tests, and create a small real-model MV3 smoke check. Pin and package a candidate model. Verify initialization, multilingual inference, offline execution, and the absence of unintended network requests.
+2. Implement version-aware schema migration, bounded analysis-text persistence, embedding cache, retention, and epoch-safe deletion. Test upgrades from a populated version-1 database before integrating UI changes.
+3. Add validated semantic request/progress/result contracts with request IDs and epochs. Implement cancellable indexing and scoring. Keep catalog requests and trend lookups as explicit existing modes.
+4. Reuse existing statistics through a clear semantic computation function. Add self-exclusion, assessment coverage, and excerpt metadata. Fix the retained-history count label or query at its source.
+5. Make **Similar to this post** the automatic primary view. Integrate progress, counts, real evidence, retry, and catalog chips. Update popup disclosures and preserve normal capture behavior.
+6. Calibrate relatedness, run regression and browser checks, verify the packaged release, and document measured limits. Deliver the built extension and exact reload instructions. A completed plan or mockup alone does not complete this implementation.
+
+## Quality gates
+
+**Semantic evaluation.** Commit a small human-reviewable fixture set with at least 120 labeled pairs covering Chinese and English, cross-language paraphrases, and at least eight topic families outside the catalog. Include housing, exams, careers, fitness, travel, relationships, software, and investing. Include hard negatives sharing generic words, ambiguous names, different uses of the same tool, negation, satire, short posts, and long posts. Relatedness means substantially the same subject or activity. Record ambiguous labels explicitly. Split calibration and held-out examples by source/subject before tuning, including translated and paraphrased variants in the same split. Aim for at least 90% precision and 75% recall on the determinate held-out examples; report counts and per-language failures. This is a regression gate on a small fixture, not a claim of universal accuracy. If it fails, evaluate a better local encoder or scoring method and report unresolved limits honestly.
+
+**Storage and metrics.** Test a real version-1 upgrade, missing-language rows, excerpt-only rows, versioned cache invalidation, identical text in multiple sessions, and current-post exclusion across sessions. Assert 12/80 versus 3/75 gives 15%, 4%, and +11 percentage points when those are assessed counts after exclusions. Test missing text, incomplete indexing, period boundaries, and deletion during encoding and caching. All-unmatched catalog history must not become one semantic topic.
+
+**Integration.** Extend the existing production-extension Playwright harness. Cover Chinese paraphrases outside the catalog, unrelated Chinese posts, a cross-language match, an unrecorded clicked post, no matches, and repeated clicks on different posts. Test UI closure, route changes, deletion, worker restart, missing model assets, and runtime failure. Deterministic test doubles may cover failures, but at least one end-to-end test must run actual packaged inference. Preserve exposure, deduplication, language, quote-card, pause, and public-lookup regression checks.
+
+**Performance and privacy.** On a documented machine, benchmark 1,000 unique posts with both cold and warm caches. Target panel shell rendering under 200 ms and warm analysis under two seconds; report cold initialization/indexing time, package size, and approximate memory. Track progress for cold indexing and allow cancellation. With public lookups disabled, verify the semantic path performs no external network requests. Include requests originating in the service worker, offscreen document, and worker in this verification.
+
+**Release.** Run typecheck, unit tests, semantic evaluation, build, and browser tests. Explicitly update release tests for new permissions, local WASM CSP, and binary assets; never scan model binaries as JavaScript or weaken checks by skipping them wholesale. Keep fixtures outside `dist`. Run a logged-in X smoke test if available and distinguish it from intercepted fixture runs. Explain any unavailable live verification.
+
+## Handoff requirements
+
+The final implementation report must list changed behavior, exact build location, installation/reload steps, executed checks, model revision/license, measured accuracy and performance, old-data limitations, and live verification status. Preserve existing authorizations and routine implementation autonomy. Ask only when an essential dependency or requirement genuinely cannot be resolved from the repository. Keep the implementation within desktop X text-post analysis.

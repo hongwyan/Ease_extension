@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { queryRange } from "../../src/shared/wiki";
@@ -8,8 +9,10 @@ import {
   DIST,
   Harness,
   button,
+  chooseMode,
   inContentWorld,
   panel,
+  semanticOutcome,
   scrollAway,
   scrollToPost,
   setTabHidden,
@@ -44,7 +47,7 @@ test.afterEach(async () => {
 
 test("full path: enable in popup → scroll → persisted history → click Feed context → numbers", async () => {
   const popup = await h.popup();
-  await expect(popup.locator("body")).toContainText("Measures how often a topic appears");
+  await expect(popup.locator("body")).toContainText("Click Feed context under any text post");
   await expect(popup.getByTestId("rec-status")).toHaveText("Recording is off");
   await expect(popup.getByTestId("pub-toggle")).not.toBeChecked();
   await popup.close();
@@ -80,7 +83,20 @@ test("full path: enable in popup → scroll → persisted history → click Feed
   await button(page, CHATGPT.id).click();
   const pnl = panel(page);
   await expect(pnl).toBeVisible();
+  // Primary view: Similar to this post, selected automatically, with the analysis target shown.
+  await expect(pnl.getByTestId("fl-post-excerpt")).toContainText("ChatGPT just rewrote my whole landing page");
+  await expect(pnl.getByTestId("fl-mode-semantic")).toHaveAttribute("aria-pressed", "true");
+  await expect(pnl.getByTestId("fl-mode-title")).toHaveText("Similar to this post");
+  expect(await semanticOutcome(page)).toBe("fl-sem-metrics");
+  // The clicked post is excluded: 4 other recorded posts (3 of them English), all analyzed.
+  await expect(pnl.getByTestId("fl-analyzed-all")).toHaveText("4");
+  await expect(pnl.getByTestId("fl-analyzed-all-detail")).toHaveText("4 analyzed (100%)");
+  await expect(pnl.getByTestId("fl-analyzed-lang")).toHaveText("3");
+  await expect(pnl.getByTestId("fl-sem-estimate")).toContainText("opposing opinions about the same subject both count");
+  // Secondary view: the exact catalog topic, with its own catalog-wide denominators.
+  await chooseMode(page, "chatgpt");
   await expect(pnl.getByTestId("fl-topic")).toHaveText("ChatGPT");
+  await expect(pnl.getByTestId("fl-mode-title")).toHaveText("Catalog topic: ChatGPT");
   // Two matches: within the post's language (English) and across all languages.
   await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("English");
   await expect(pnl.getByTestId("fl-scope-all")).toHaveText("All languages");
@@ -149,14 +165,15 @@ test("full path: enable in popup → scroll → persisted history → click Feed
   await page.keyboard.press("Escape");
   await expect(panel(page)).toHaveCount(0);
 
-  // Second topic as a selectable chip.
+  // Catalog topics as selectable chips after the primary view.
   await scrollToPost(page, MULTI.id);
   await button(page, MULTI.id).click();
   const chips = panel(page).locator(".chip");
-  await expect(chips).toHaveText(["ChatGPT", "Earning money with AI"]);
+  await expect(chips).toHaveText(["Similar to this post", "ChatGPT", "Earning money with AI"]);
   await expect(chips.nth(0)).toHaveAttribute("aria-pressed", "true");
-  await chips.nth(1).click();
-  await expect(chips.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await chips.nth(2).click();
+  await expect(chips.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect(chips.nth(0)).toHaveAttribute("aria-pressed", "false");
   await expect(panel(page).getByTestId("fl-share-lang-detail")).toHaveText("1 of 4");
   await expect(panel(page).getByTestId("fl-share-all-detail")).toHaveText("1 of 5");
   await expect(panel(page).getByTestId("fl-trend-status")).toContainText("No comparable public series");
@@ -167,7 +184,7 @@ test("full path: enable in popup → scroll → persisted history → click Feed
   await page.screenshot({ path: "e2e-screens/full-path-light.png" });
 });
 
-test("unknown topic: explains coverage; post still counts in the denominator", async () => {
+test("no catalog topic: semantic view instead of a 'no topic' share; coverage only as a diagnostic", async () => {
   await h.enableRecording();
   const page = await h.openHome({ forYou: [UNKNOWN, CHATGPT], topSpacer: SPACER });
   await scrollToPost(page, UNKNOWN.id);
@@ -178,15 +195,19 @@ test("unknown topic: explains coverage; post still counts in the denominator", a
   await scrollToPost(page, UNKNOWN.id);
   await button(page, UNKNOWN.id).click();
   const pnl = panel(page);
-  await expect(pnl.getByTestId("fl-topic")).toHaveText("No recognized topic");
-  await expect(pnl.getByTestId("fl-total-lang")).toHaveText("2");
-  await expect(pnl.getByTestId("fl-total-all")).toHaveText("2");
-  await expect(pnl.getByTestId("fl-sentence-unknown")).toHaveText("This post matched no catalog topic.");
-  await expect(pnl.getByTestId("fl-sentence-lang")).toContainText(
-    "1 of 2 recorded English posts (50%) in the last 7 days also matched no topic",
-  );
-  await pnl.getByText("Why this result?").click();
-  await expect(pnl.getByTestId("fl-coverage")).toContainText("recognizes 3 topics: ChatGPT, Claude AI, Earning money with AI");
+  await expect(pnl.locator(".chip")).toHaveText(["Similar to this post"]); // no catalog chips
+  expect(await semanticOutcome(page)).toBe("fl-sem-metrics");
+  // A sunrise caption and a ChatGPT post are not about the same subject: explicit "no matches" state.
+  await expect(pnl.getByTestId("fl-sem-nomatch")).toHaveText("No related posts found among 1 analyzed other recorded posts from the last 14 days.");
+  await expect(pnl.getByTestId("fl-related-all")).toHaveText("0%");
+  await expect(pnl.getByTestId("fl-related-all-detail")).toHaveText("0 of 1");
+  await expect(pnl).not.toContainText("No catalog topic");
+  await expect(pnl).not.toContainText("matched no topic");
+  await pnl.getByTestId("fl-why-summary").click();
+  await expect(pnl.getByTestId("fl-why-catalog")).toContainText("this post matches none of the bundled catalog topics");
+  await expect(pnl.getByTestId("fl-why-catalog")).toContainText("1 of 2 recorded posts in the last 7 days matched no catalog topic");
+  await expect(pnl.getByTestId("fl-why-catalog")).toContainText("measures catalog coverage");
+  await expect(pnl.getByTestId("fl-why-exclusion")).toContainText("1 recorded exposure of this same post was left out");
   await expect(pnl.getByTestId("fl-trend")).toHaveCount(0);
 });
 
@@ -195,8 +216,11 @@ test("cold start: empty state, and opening the panel never records an exposure",
   const page = await h.openHome({ forYou: [CHATGPT], topSpacer: SPACER });
   await scrollToPost(page, CHATGPT.id);
   await button(page, CHATGPT.id).click();
-  await expect(panel(page).getByTestId("fl-empty")).toContainText("No qualifying exposures yet");
+  expect(await semanticOutcome(page)).toBe("fl-sem-empty");
+  await expect(panel(page).getByTestId("fl-sem-empty")).toContainText("No other recorded posts yet");
   await expect(panel(page).getByTestId("fl-recording-off")).toBeVisible();
+  await chooseMode(page, "chatgpt");
+  await expect(panel(page).getByTestId("fl-empty")).toContainText("No qualifying exposures yet");
   await expect(panel(page).getByTestId("fl-trend-status")).toContainText("Public lookups are off");
   await settle(page);
   expect(await h.exposures()).toEqual([]);
@@ -304,6 +328,7 @@ test("service-worker restart preserves history and deduplication", async () => {
   expect((await h.exposures()).length).toBe(2);
   await ext.close();
   await button(page, CHATGPT.id).click();
+  await chooseMode(page, "chatgpt");
   await expect(panel(page).getByTestId("fl-share-all-detail")).toHaveText("2 of 2");
 });
 
@@ -371,8 +396,9 @@ test("quoted post: outer status ID, author and text only", async () => {
   const [row] = await h.exposures();
   expect(row).toMatchObject({ statusId: QUOTE.id, author: "gina", topics: [] });
   expect(row!.excerpt).not.toContain("Claude");
+  expect(row!.text).toBe(QUOTE.text); // stored analysis text is the outer post's own visible text only
   await button(page, QUOTE.id).click();
-  await expect(panel(page).getByTestId("fl-topic")).toHaveText("No recognized topic");
+  await expect(panel(page).locator(".chip")).toHaveText(["Similar to this post"]);
 });
 
 test("pause while a timer is pending stops collection in the open tab; resume restarts it", async () => {
@@ -445,6 +471,7 @@ test("seeded history 12/80 vs 3/75 renders 15%, 4% and +11 percentage points", a
   await scrollToPost(page, CHATGPT.id);
   await button(page, CHATGPT.id).click();
   const pnl = panel(page);
+  await chooseMode(page, "chatgpt");
   // Seeded rows predate language tracking, so they count as English: both scopes agree.
   for (const sc of ["lang", "all"]) {
     await expect(pnl.getByTestId(`fl-share-${sc}`)).toHaveText("15%");
@@ -496,6 +523,12 @@ test("all languages: every text post gets a button; panel shows this language an
   await scrollToPost(page, JA_CHATGPT.id);
   await button(page, JA_CHATGPT.id).click();
   let pnl = panel(page);
+  expect(await semanticOutcome(page)).toBe("fl-sem-metrics");
+  await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("Japanese");
+  await expect(pnl.getByTestId("fl-analyzed-lang")).toHaveText("2"); // the other two Japanese posts
+  await expect(pnl.getByTestId("fl-analyzed-all")).toHaveText("6");
+  await expect(pnl.getByTestId("fl-analyzed-all-detail")).toHaveText("5 analyzed (83.3%) · 1 no text"); // emoji-only post
+  await chooseMode(page, "chatgpt");
   await expect(pnl.getByTestId("fl-topic")).toHaveText("ChatGPT");
   await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("Japanese");
   await expect(pnl.getByTestId("fl-share-lang")).toHaveText("33.3%");
@@ -513,6 +546,7 @@ test("all languages: every text post gets a button; panel shows this language an
   await scrollToPost(page, JA_EARN.id);
   await button(page, JA_EARN.id).click();
   pnl = panel(page);
+  await chooseMode(page, "ai-earnings");
   await expect(pnl.getByTestId("fl-topic")).toHaveText("Earning money with AI");
   await expect(pnl.getByTestId("fl-share-lang-detail")).toHaveText("1 of 3");
   await expect(pnl.getByTestId("fl-share-all-detail")).toHaveText("2 of 7");
@@ -522,6 +556,7 @@ test("all languages: every text post gets a button; panel shows this language an
   await scrollToPost(page, PT_BR.id);
   await button(page, PT_BR.id).click();
   pnl = panel(page);
+  await chooseMode(page, "ai-earnings");
   await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("Portuguese");
   await expect(pnl.getByTestId("fl-share-lang-detail")).toHaveText("1 of 1");
   await page.keyboard.press("Escape");
@@ -530,10 +565,10 @@ test("all languages: every text post gets a button; panel shows this language an
   await scrollToPost(page, EMOJI.id);
   await button(page, EMOJI.id).click();
   pnl = panel(page);
-  await expect(pnl.getByTestId("fl-topic")).toHaveText("No recognized topic");
-  await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("Undetermined language");
-  await expect(pnl.getByTestId("fl-total-lang")).toHaveText("1");
-  await expect(pnl.getByTestId("fl-total-all")).toHaveText("7");
+  await expect(pnl.locator(".chip")).toHaveText(["Similar to this post"]);
+  // Emoji-only text cannot be analyzed: a distinct state, not a zero-match claim.
+  expect(await semanticOutcome(page)).toBe("fl-sem-insufficient");
+  await expect(pnl.getByTestId("fl-sem-insufficient")).toContainText("does not mean that nothing related was recorded");
   await page.screenshot({ path: "e2e-screens/multilingual-emoji.png" });
   await page.keyboard.press("Escape");
 
@@ -554,6 +589,7 @@ test.describe("public trend", () => {
     const page = await h.openHome({ forYou: [CHATGPT], topSpacer: SPACER });
     await scrollToPost(page, CHATGPT.id);
     await button(page, CHATGPT.id).click();
+    await chooseMode(page, "chatgpt");
     await expect(panel(page).getByTestId("fl-trend-status")).toContainText("Public lookups are off");
     await page.waitForTimeout(500);
     expect(h.wikiRequests).toHaveLength(0);
@@ -578,6 +614,7 @@ test.describe("public trend", () => {
     await scrollToPost(page, CLAUDE.id);
     await button(page, CLAUDE.id).click();
     const pnl = panel(page);
+    await chooseMode(page, "claude-ai");
     await expect(pnl.getByTestId("fl-trend-direction")).toHaveText("Up +100%");
     await expect(pnl.getByTestId("fl-trend-current")).toContainText("14,000 views");
     await expect(pnl.getByTestId("fl-trend-previous")).toContainText("7,000 views");
@@ -596,6 +633,7 @@ test.describe("public trend", () => {
     // Offline: the cached series is shown and no new request succeeds.
     h.wiki = (route) => route.abort("internetdisconnected");
     await button(page, CLAUDE.id).click();
+    await chooseMode(page, "claude-ai");
     await expect(pnl.getByTestId("fl-trend-updated")).toContainText("Cached result from");
     await expect(pnl.getByTestId("fl-trend-direction")).toHaveText("Up +100%");
     expect(calls).toBe(1);
@@ -617,6 +655,7 @@ test.describe("public trend", () => {
     await expect.poll(() => h.statusIds()).toEqual([CHATGPT.id]);
     const t0 = Date.now();
     await button(page, CHATGPT.id).click();
+    await chooseMode(page, "chatgpt");
     await expect(panel(page).getByTestId("fl-share-lang")).toHaveText("100%");
     expect(Date.now() - t0).toBeLessThan(1500);
     await expect(panel(page).getByTestId("fl-trend-status")).toHaveText("Looking up public pageviews…");
@@ -634,6 +673,7 @@ test.describe("public trend", () => {
     await scrollToPost(page, CHATGPT.id);
     await expect.poll(() => h.statusIds()).toEqual([CHATGPT.id]);
     await button(page, CHATGPT.id).click();
+    await chooseMode(page, "chatgpt");
     await expect(panel(page).getByTestId("fl-trend-status")).toContainText("Could not reach Wikimedia");
     await expect(panel(page).getByTestId("fl-share-lang")).toHaveText("100%");
   });
@@ -651,26 +691,60 @@ test("dark theme: panel and button follow X's Dim / Lights out background", asyn
   await page.screenshot({ path: "e2e-screens/panel-dark.png" });
 });
 
-test("release folder: manifest at the root, scoped permissions, no fixture data", async () => {
+test("release folder: manifest, permissions, local-WASM CSP, pinned model assets, no fixture data", async () => {
   const manifest = JSON.parse(readFileSync(join(DIST, "manifest.json"), "utf8"));
   expect(manifest.manifest_version).toBe(3);
-  expect(manifest.permissions).toEqual(["storage"]);
+  expect(manifest.version).toBe(JSON.parse(readFileSync("package.json", "utf8")).version);
+  // "offscreen" hosts the local inference worker; nothing else was added.
+  expect(manifest.permissions).toEqual(["storage", "offscreen"]);
   expect(manifest.host_permissions).toEqual(["https://x.com/*"]);
   expect(manifest.content_scripts[0].matches).toEqual(["https://x.com/*"]);
-  expect(manifest.content_security_policy.extension_pages).toContain("connect-src https://wikimedia.org");
+  // Local WASM only: no remote script sources; network limited to the extension itself and the opt-in Wikimedia lookup.
+  expect(manifest.content_security_policy.extension_pages).toBe(
+    "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://wikimedia.org",
+  );
+  expect(manifest.cross_origin_embedder_policy).toEqual({ value: "require-corp" });
+  expect(manifest.cross_origin_opener_policy).toEqual({ value: "same-origin" });
+
+  // Binary model and runtime assets: verified byte-for-byte against the pinned lock, never scanned as text.
+  const lock = JSON.parse(readFileSync("scripts/models.lock.json", "utf8"));
+  const release = lock.models[lock.release];
+  for (const [file, spec] of Object.entries(release.files) as [string, { size: number; sha256: string }][]) {
+    const p = join(DIST, "models", lock.release, file);
+    expect(statSync(p).size, file).toBe(spec.size);
+    expect(createHash("sha256").update(readFileSync(p)).digest("hex"), file).toBe(spec.sha256);
+  }
+  const info = JSON.parse(readFileSync(join(DIST, "models", "MODEL_INFO.json"), "utf8"));
+  expect(info).toMatchObject({ model: lock.release, revision: release.revision, license: release.license });
+  for (const f of ["ort-wasm-simd-threaded.wasm", "ort-wasm-simd-threaded.mjs"]) {
+    const shipped = createHash("sha256").update(readFileSync(join(DIST, "ort", f))).digest("hex");
+    const pinned = createHash("sha256").update(readFileSync(join("node_modules/onnxruntime-web/dist", f))).digest("hex");
+    expect(shipped, f).toBe(pinned);
+  }
+
   const files: string[] = [];
   const walk = (d: string) =>
     readdirSync(d).forEach((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : files.push(join(d, f))));
   walk(DIST);
+  const modelFiles = new Set(Object.keys(release.files).map((f) => join(DIST, "models", lock.release, f)));
   for (const f of files) {
-    expect(f).not.toMatch(/fixture|test|spec/i);
-    if (/\.(js|html|json)$/.test(f)) {
+    expect(f.slice(DIST.length)).not.toMatch(/fixture|\.spec\.|\.test\.|[\\/]tests?[\\/]/i);
+    if (modelFiles.has(f)) continue; // checked by hash above
+    // Every other file must be an expected release file type.
+    expect(f).toMatch(/\.(js|mjs|html|css|json|png|wasm)$/);
+    if (/\.(js|mjs|html)$/.test(f) || f.endsWith("manifest.json") || f.endsWith("MODEL_INFO.json")) {
       const text = readFileSync(f, "utf8");
-      expect(text).not.toContain("__fx");
-      expect(text).not.toContain("1855000000000000001");
-      expect(text).not.toMatch(/api\.x\.com|graphql/i);
+      expect(text, f).not.toContain("__fx");
+      expect(text, f).not.toContain("1855000000000000001");
+      expect(text, f).not.toMatch(/api\.x\.com|graphql/i);
+      expect(text, f).not.toContain("tests/semantic");
     }
   }
+  // Remote model loading and browser caches are switched off in the shipped worker.
+  const worker = readFileSync(join(DIST, "semantic-worker.js"), "utf8");
+  expect(worker).toMatch(/env\d*\.allowRemoteModels = false;/);
+  expect(worker).toMatch(/env\d*\.useBrowserCache = false;/);
+  expect(worker).toMatch(/env\d*\.useWasmCache = false;/);
 });
 
 function addDaysStr(day: string, n: number): string {

@@ -1,5 +1,5 @@
 import { classify } from "../shared/classify";
-import { MAX_TEXT, type ExposureResult, type PanelResponse, type TrendResponse } from "../shared/messages";
+import { MAX_TEXT, type ExposureResult, type PanelResponse, type SemanticResponse, type TrendResponse } from "../shared/messages";
 import { DEFAULT_SETTINGS, SETTINGS_KEY, getSettings, parseSettings, type Settings } from "../shared/settings";
 import type { TrendResult } from "../shared/wiki";
 import { ExposureTracker } from "./tracker";
@@ -124,6 +124,17 @@ function togglePanel(post: HTMLElement, host: HTMLElement, btn: HTMLButtonElemen
     requestMetrics: (topicIds) => send<PanelResponse>({ type: "panel", topicIds, lang: info.lang }),
     requestTrend: async (topicId): Promise<TrendResult | null> =>
       (await send<TrendResponse>({ type: "trend", topicId }))?.result ?? null,
+    // Automatic semantic comparison: bounded visible text of the clicked post; never records an exposure.
+    pollSemantic: (requestId) =>
+      send<SemanticResponse>({
+        type: "semantic",
+        requestId,
+        statusId: info.statusId!,
+        text: info.text.slice(0, MAX_TEXT),
+        lang: info.lang,
+        epoch: settings.epoch,
+      }),
+    cancelSemantic: (requestId, keepPartial) => send<SemanticResponse>({ type: "semanticCancel", requestId, keepPartial }),
     onClose: () => btn.setAttribute("aria-expanded", "false"),
   });
 }
@@ -198,6 +209,8 @@ async function start(): Promise<void> {
       // Data deleted: pending timers must not resurrect anything.
       tracker.cancelAll();
       tracker.resetCounted();
+      // Results on screen came from deleted data: recompute from what is left.
+      panel.refresh();
     }
     if (!settings.recording && prev.recording) tracker.cancelAll();
     if (settings.recording && !prev.recording) tracker.rearm();

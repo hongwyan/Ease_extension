@@ -11,10 +11,18 @@ import type { WikiTrend } from "../shared/wiki";
  *   Every write that could resurrect deleted data checks the epoch inside the
  *   same transaction, so a write queued before a delete is rejected after it.
  * - `cache`: Wikimedia responses by article + date range.
+ * - `embeddings` (v2): local encoder vectors keyed by a hash of the encoder identity and the
+ *   normalized analysis text, so identical text is encoded once and a model/preprocessing
+ *   change never mixes incompatible vectors. Derived personal data: deleted with history.
+ *
+ * Schema upgrades are incremental (`oldVersion` branches) and never touch existing rows.
  */
 
 export const DB_NAME = "x-feed-lens";
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
+
+/** Version of the stored `text` field: visible outer-post text, whitespace collapsed, at most MAX_TEXT characters. */
+export const TEXT_VERSION = 1;
 
 export interface ExposureRecord {
   /** `${sessionId}:${statusId}` */
@@ -28,6 +36,23 @@ export interface ExposureRecord {
   catalogVersion: string;
   /** Normalized post language. Absent on rows recorded before v0.2, which were English-only. */
   lang?: string;
+  /**
+   * Bounded analysis text (v0.3+). Absent on older rows, which are analyzed from `excerpt`
+   * and labeled as such. Never reconstructed by fetching posts.
+   */
+  text?: string;
+  /** Format of `text` (TEXT_VERSION). */
+  textVersion?: number;
+}
+
+export interface EmbeddingRecord {
+  /** `${encoderKeyHash}:${sha256(analysis input)}` */
+  key: string;
+  vec: Float32Array;
+  tokens: number;
+  chunks: number;
+  truncated: boolean;
+  createdAt: number;
 }
 
 export interface CacheRecord {
@@ -97,13 +122,20 @@ export class FeedStore {
     if (this.dbp) return this.dbp;
     this.dbp = new Promise((resolve, reject) => {
       const req = this.factory.open(this.name, DB_VERSION);
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (e) => {
         const db = req.result;
-        const ex = db.createObjectStore("exposures", { keyPath: "key" });
-        ex.createIndex("ts", "ts");
-        db.createObjectStore("meta", { keyPath: "k" });
-        const cache = db.createObjectStore("cache", { keyPath: "key" });
-        cache.createIndex("article", "article");
+        const old = e.oldVersion;
+        if (old < 1) {
+          const ex = db.createObjectStore("exposures", { keyPath: "key" });
+          ex.createIndex("ts", "ts");
+          db.createObjectStore("meta", { keyPath: "k" });
+          const cache = db.createObjectStore("cache", { keyPath: "key" });
+          cache.createIndex("article", "article");
+        }
+        if (old < 2) {
+          // v0.3: embedding cache. Existing exposures stay as they are (no text backfill).
+          db.createObjectStore("embeddings", { keyPath: "key" });
+        }
       };
       req.onsuccess = () => {
         const db = req.result;
@@ -217,6 +249,13 @@ export class FeedStore {
     return { count, oldest: first ? (first.value as ExposureRecord).ts : null };
   }
 
+  async allExposures(now: number): Promise<ExposureRecord[]> {
+    await this.prune(now);
+    const db = await this.open();
+    const t = db.transaction("exposures", "readonly");
+    return (await reqDone(t.objectStore("exposures").getAll())) as ExposureRecord[];
+  }
+
   async prune(now: number): Promise<void> {
     const db = await this.open();
     const t = db.transaction(["exposures", "cache"], "readwrite");
@@ -240,12 +279,13 @@ export class FeedStore {
     await txDone(t);
   }
 
-  /** Deletes history, excerpts and caches; bumps the epoch. Returns the new epoch. */
+  /** Deletes history, analysis text, excerpts, embeddings and caches; bumps the epoch. Returns the new epoch. */
   async clearAll(now: number): Promise<number> {
     const db = await this.open();
-    const t = db.transaction(["exposures", "cache", "meta"], "readwrite");
+    const t = db.transaction(["exposures", "cache", "embeddings", "meta"], "readwrite");
     t.objectStore("exposures").clear();
     t.objectStore("cache").clear();
+    t.objectStore("embeddings").clear();
     const meta = t.objectStore("meta");
     let epoch = 0;
     readMeta(meta, (m) => {
@@ -282,5 +322,65 @@ export class FeedStore {
     });
     await txDone(t);
     return stored;
+  }
+
+  async getEmbeddings(keys: string[]): Promise<Map<string, EmbeddingRecord>> {
+    const out = new Map<string, EmbeddingRecord>();
+    if (keys.length === 0) return out;
+    const db = await this.open();
+    const t = db.transaction("embeddings", "readonly");
+    const st = t.objectStore("embeddings");
+    await Promise.all(
+      keys.map(async (k) => {
+        const r = (await reqDone(st.get(k))) as EmbeddingRecord | undefined;
+        if (r) out.set(k, r);
+      }),
+    );
+    return out;
+  }
+
+  /**
+   * Stores freshly computed vectors unless data was deleted since the work started
+   * (epoch checked inside the same transaction). Concurrent writers of the same key
+   * write identical values (same text, same encoder), so the last put is harmless.
+   */
+  async putEmbeddings(recs: EmbeddingRecord[], epoch: number): Promise<boolean> {
+    if (recs.length === 0) return true;
+    const db = await this.open();
+    const t = db.transaction(["embeddings", "meta"], "readwrite");
+    const st = t.objectStore("embeddings");
+    let stored = false;
+    readMeta(t.objectStore("meta"), (m) => {
+      if (m.epoch !== epoch) return;
+      for (const r of recs) st.put(r);
+      stored = true;
+    });
+    await txDone(t);
+    return stored;
+  }
+
+  /** Removes embeddings that no retained exposure references (aged out, deleted, or from an older encoder). */
+  async sweepEmbeddings(keep: Set<string>): Promise<number> {
+    const db = await this.open();
+    const t = db.transaction("embeddings", "readwrite");
+    let removed = 0;
+    const cur = t.objectStore("embeddings").openKeyCursor();
+    cur.onsuccess = () => {
+      const c = cur.result;
+      if (!c) return;
+      if (!keep.has(String(c.primaryKey))) {
+        t.objectStore("embeddings").delete(c.primaryKey);
+        removed++;
+      }
+      c.continue();
+    };
+    await txDone(t);
+    return removed;
+  }
+
+  async countEmbeddings(): Promise<number> {
+    const db = await this.open();
+    const t = db.transaction("embeddings", "readonly");
+    return reqDone(t.objectStore("embeddings").count());
   }
 }

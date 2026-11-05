@@ -57,3 +57,39 @@ describe("makeExcerpt", () => {
     expect(makeExcerpt("  short   text ")).toBe("short text");
   });
 });
+
+describe("semantic messages", () => {
+  const ok = {
+    type: "semantic",
+    requestId: "0b9c3f0e-8a7d-4c1e-9b2a-1f2e3d4c5b6a",
+    statusId: "1855000000000000001",
+    text: "上海房租又涨了",
+    lang: "zh",
+    epoch: 2,
+  };
+  it("accepts a bounded request with a request ID, status ID, language and epoch", () => {
+    expect(validateMessage(ok)).toEqual(ok);
+    expect(validateMessage({ ...ok, extra: "dropped" })).toEqual(ok);
+    expect(validateMessage({ ...ok, text: "" })).toEqual({ ...ok, text: "" }); // empty text → "insufficient text" state, not an error
+  });
+  it("rejects malformed or unbounded requests", () => {
+    expect(validateMessage({ ...ok, requestId: "1" })).toBeNull();
+    expect(validateMessage({ ...ok, statusId: "abc" })).toBeNull();
+    expect(validateMessage({ ...ok, text: "x".repeat(4001) })).toBeNull();
+    expect(validateMessage({ ...ok, lang: "Chinese" })).toBeNull();
+    expect(validateMessage({ ...ok, epoch: -1 })).toBeNull();
+    expect(validateMessage({ ...ok, epoch: "2" })).toBeNull();
+  });
+  it("validates cancellation", () => {
+    expect(validateMessage({ type: "semanticCancel", requestId: ok.requestId, keepPartial: true })).toEqual({
+      type: "semanticCancel",
+      requestId: ok.requestId,
+      keepPartial: true,
+    });
+    expect(validateMessage({ type: "semanticCancel", requestId: ok.requestId })).toBeNull();
+  });
+  it("catalog panel and trend requests keep their own strict validation", () => {
+    expect(validateMessage({ type: "panel", topicIds: ["not-a-topic"], lang: "en" })).toBeNull();
+    expect(validateMessage({ type: "trend", topicId: "semantic" })).toBeNull();
+  });
+});

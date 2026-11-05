@@ -1,6 +1,7 @@
 import { TOPIC_IDS } from "./catalog";
 import { isLangCode } from "./language";
 import type { ScopedMetrics } from "./metrics";
+import type { SemanticMetrics } from "./semanticMetrics";
 import type { TrendResult } from "./wiki";
 
 /** Max characters of visible post text sent from the content script for classification. */
@@ -13,7 +14,7 @@ export interface ExposureMessage {
   sessionId: string;
   statusId: string;
   author: string | null;
-  /** Visible outer-post text; classified in the service worker, only an excerpt is stored. */
+  /** Visible outer-post text; classified in the service worker and stored (bounded) as local analysis text. */
   text: string;
   /** Normalized post language from X's lang attribute ("en", "ja", … "und"). */
   lang: string;
@@ -26,6 +27,67 @@ export interface PanelRequest {
   topicIds: string[];
   /** The clicked post's language; metrics are returned for it and for all languages. */
   lang: string;
+}
+
+/**
+ * Starts (or polls) the automatic semantic comparison for a clicked post. Idempotent per
+ * requestId: repeating the same request returns the current progress or result, and after a
+ * service-worker restart it resumes from cached embeddings. Never records an exposure.
+ */
+export interface SemanticRequest {
+  type: "semantic";
+  requestId: string;
+  statusId: string;
+  /** Visible outer-post text of the clicked post (bounded). */
+  text: string;
+  lang: string;
+  /** Data epoch seen by the tab; a request from before a delete is refused. */
+  epoch: number;
+}
+
+/** Stops a running analysis. keepPartial: return counts from what is already indexed (pending stays pending). */
+export interface SemanticCancelRequest {
+  type: "semanticCancel";
+  requestId: string;
+  keepPartial: boolean;
+}
+
+export interface EvidenceItem {
+  statusId: string;
+  author: string | null;
+  ts: number;
+  lang: string;
+  excerpt: string;
+  score: number;
+  fromExcerpt: boolean;
+}
+
+export interface SemanticResult {
+  /** ok: counts computed. empty-history: no other recorded posts in the two periods. insufficient-text: the clicked post has too little text to analyze. */
+  outcome: "ok" | "empty-history" | "insufficient-text";
+  /** Indexing was stopped before every eligible post was analyzed; pending counts are > 0. */
+  partial: boolean;
+  metrics: SemanticMetrics | null;
+  evidence: EvidenceItem[];
+  query: { recorded: boolean; tokens: number; chunks: number; truncated: boolean };
+  /** Retained exposures, every language, last 30 days. */
+  retainedTotal: number;
+  model: { id: string; revision: string; license: string; threshold: number; thresholdVersion: string };
+  timings: { totalMs: number; encodeMs: number; encoded: number; cached: number; cold: boolean };
+}
+
+export type SemanticErrorKind = "model-unavailable" | "inference" | "timeout" | "deleted" | "storage";
+
+export type SemanticState =
+  | { phase: "working"; stage: "loading-model" | "indexing" | "scoring"; done: number; total: number }
+  | { phase: "done"; result: SemanticResult }
+  | { phase: "error"; kind: SemanticErrorKind; message: string }
+  | { phase: "cancelled" };
+
+export interface SemanticResponse {
+  ok: true;
+  requestId: string;
+  state: SemanticState;
 }
 
 export interface TrendRequest {
@@ -50,6 +112,8 @@ export interface SetSettingsRequest {
 export type RequestMessage =
   | ExposureMessage
   | PanelRequest
+  | SemanticRequest
+  | SemanticCancelRequest
   | TrendRequest
   | StatusRequest
   | ClearRequest
@@ -73,6 +137,8 @@ export interface StatusResponse {
   epoch: number;
   recording: boolean;
   publicLookups: boolean;
+  /** Cached text embeddings (derived data, deleted with history). */
+  embeddings: number;
 }
 
 export type TrendResponse = { ok: true; result: TrendResult };
@@ -105,6 +171,20 @@ export function validateMessage(raw: unknown): RequestMessage | null {
       if (!ids.every((id) => typeof id === "string" && TOPIC_IDS.includes(id))) return null;
       if (!isLangCode(raw.lang)) return null;
       return { type: "panel", topicIds: [...new Set(ids as string[])], lang: raw.lang };
+    }
+    case "semantic": {
+      const { requestId, statusId, text, lang, epoch } = raw;
+      if (typeof requestId !== "string" || !UUID.test(requestId)) return null;
+      if (typeof statusId !== "string" || !STATUS_ID.test(statusId)) return null;
+      if (typeof text !== "string" || text.length > MAX_TEXT) return null;
+      if (!isLangCode(lang)) return null;
+      if (typeof epoch !== "number" || !Number.isInteger(epoch) || epoch < 0) return null;
+      return { type: "semantic", requestId, statusId, text, lang, epoch };
+    }
+    case "semanticCancel": {
+      if (typeof raw.requestId !== "string" || !UUID.test(raw.requestId)) return null;
+      if (typeof raw.keepPartial !== "boolean") return null;
+      return { type: "semanticCancel", requestId: raw.requestId, keepPartial: raw.keepPartial };
     }
     case "trend": {
       if (typeof raw.topicId !== "string" || !TOPIC_IDS.includes(raw.topicId)) return null;

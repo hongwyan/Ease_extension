@@ -32,7 +32,7 @@ svg { width: 13px; height: 13px; }
 export const PANEL_CSS = `${TOKENS}
 :host { position: absolute; z-index: 2147483000; }
 .panel {
-  width: min(380px, calc(100vw - 16px)); max-height: min(560px, calc(100vh - 24px)); overflow: auto;
+  width: min(400px, calc(100vw - 16px)); max-height: min(560px, calc(100vh - 24px)); overflow: auto;
   background: var(--fl-bg); color: var(--fl-fg); border: 1px solid var(--fl-border);
   border-radius: 14px; box-shadow: var(--fl-shadow); padding: 14px 16px 12px;
   font: 400 13px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -78,5 +78,18 @@ a:hover { text-decoration: underline; }
 .evidence li { list-style: none; margin-left: -18px; padding: 6px 8px; background: var(--fl-soft); border-radius: 8px; margin-bottom: 6px; }
 .evidence .meta { font-size: 12px; color: var(--fl-muted); }
 .empty { padding: 8px 10px; background: var(--fl-soft); border-radius: 10px; }
+.target { margin: 0 0 10px; padding: 6px 10px; border-left: 3px solid var(--fl-accent); background: var(--fl-soft);
+  border-radius: 0 8px 8px 0; font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
+.sep { margin-left: 4px; }
+.body > h3 { margin-top: 2px; }
+.btn { font: inherit; font-size: 12px; font-weight: 600; border: 1px solid var(--fl-border); background: var(--fl-bg); color: var(--fl-fg);
+  border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--fl-accent); color: var(--fl-accent); }
+.btn.primary { background: var(--fl-accent); border-color: var(--fl-accent); color: var(--fl-accent-fg); }
+.progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; background: var(--fl-soft); border-radius: 10px; }
+.progress progress { flex: 1 1 120px; accent-color: var(--fl-accent); }
+.note.block { display: block; padding: 8px 10px; border: 1px solid var(--fl-border); border-radius: 10px; margin: 6px 0; }
+.note.block .btn { margin-top: 6px; }
+.evidence li a { font-size: 12px; }
 footer { color: var(--fl-muted); font-size: 11px; border-top: 1px solid var(--fl-border); padding-top: 8px; }
 `;

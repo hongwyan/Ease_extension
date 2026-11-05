@@ -13,10 +13,10 @@
         <h1>X Feed Lens</h1>
       </header>
       <p class="intro">
-        Measures how often a topic appears among the text posts you actually see on your X
-        <strong>For you</strong> timeline, in the post's own language and across all languages, whether that changed
-        since the previous week, and (optionally) whether public interest in the same topic moved too. Click
-        <strong>Feed context</strong> under a post to see it.
+        Click <strong>Feed context</strong> under any text post on your X <strong>For you</strong> timeline to see how
+        many of the other posts you actually saw are about the same subject, in the post's own language and across all
+        languages, and whether that changed since the previous week. A multilingual language model bundled with the
+        extension does the comparison on this device; post text never leaves it.
       </p>
 
       <section aria-labelledby="rec-h">
@@ -27,8 +27,9 @@
           <button type="button" id="rec-toggle" data-testid="rec-toggle" class="primary">Enable recording on X</button>
         </div>
         <p class="muted">
-          A post counts once per tab session when at least half of it stays on screen for one second. Only post IDs,
-          author handles, X's language tag, matched topics and a short excerpt are stored, on this device, for 30 days.
+          A post counts once per tab session when at least half of it stays on screen for one second. Stored on this
+          device for 30 days: post ID, author handle, X's language tag, matched catalog topics, the post's visible text
+          (up to 4,000 characters, for local analysis), a short excerpt, and the meaning vectors computed from that text.
         </p>
       </section>
 
@@ -45,7 +46,11 @@
 
       <section aria-labelledby="del-h">
         <h2 id="del-h">Delete data</h2>
-        <p class="muted">Removes all recorded history, excerpts and cached public data from this device.</p>
+        <p class="muted">
+          Removes all recorded history, stored post text, excerpts, meaning vectors, running analyses and cached public
+          data from this device. The bundled language model is part of the extension itself, contains none of your data,
+          and stays installed.
+        </p>
         <div class="row">
           <button type="button" id="del" data-testid="del" class="danger">Delete all data…</button>
           <button type="button" id="del-confirm" data-testid="del-confirm" class="danger" hidden>Yes, delete everything</button>
