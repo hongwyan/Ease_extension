@@ -29,7 +29,7 @@ async function refresh(): Promise<void> {
   recStats.textContent =
     res.retained === 0
       ? "No posts recorded yet."
-      : `${res.retained.toLocaleString("en-US")} eligible English text post${res.retained === 1 ? "" : "s"} recorded` +
+      : `${res.retained.toLocaleString("en-US")} eligible text post${res.retained === 1 ? "" : "s"} recorded` +
         (res.oldest ? ` since ${formatDayYear(res.oldest)}` : "") +
         " (last 30 days kept).";
   pubToggle.checked = res.publicLookups;

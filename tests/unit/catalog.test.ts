@@ -59,6 +59,21 @@ describe("spec requirements", () => {
     expect(termRegex("ai generated").test("AI-generated")).toBe(true);
   });
 
+  it("script-aware boundaries: Latin names next to CJK text, CJK terms as substrings", () => {
+    expect(termRegex("chatgpt").test("ChatGPTで稼いだ")).toBe(true);
+    expect(termRegex("ai").test("生成AIで")).toBe(true);
+    expect(termRegex("ai").test("Kaiの日記")).toBe(false);
+    expect(termRegex("稼").test("月30万円稼いだ")).toBe(true);
+    expect(termRegex("ии").test("Это сделал ИИ.")).toBe(true);
+    expect(termRegex("ии").test("линии")).toBe(false);
+  });
+
+  it("every topic lists the languages it has vocabulary for", () => {
+    expect(TOPICS.find((t) => t.id === "ai-earnings")!.vocabularyLanguages).toEqual(
+      expect.arrayContaining(["es", "pt", "fr", "de", "ja", "ko", "zh", "ru", "hi", "ar"]),
+    );
+  });
+
   it("handles curly apostrophes and Unicode names", () => {
     expect(ids("Anthropic’s Claude is great at long documents")).toContain("claude-ai");
     expect(ids("Claude Makélélé and an AI model of midfield play")).toEqual([]);

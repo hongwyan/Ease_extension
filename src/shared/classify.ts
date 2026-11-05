@@ -13,25 +13,45 @@ export interface Classification {
   matches: TopicMatch[];
 }
 
-const WORD = "[\\p{L}\\p{N}_]";
-
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Plain catalog term → whole-word, case-insensitive regex. */
+/**
+ * Scripts written without spaces between words (or, for Hangul, with particles
+ * glued to words). Terms in these scripts match as substrings.
+ */
+const NO_BOUNDARY_SCRIPTS = ["Han", "Hiragana", "Katakana", "Hangul", "Thai", "Lao", "Khmer", "Myanmar", "Tibetan"];
+const SPACED_SCRIPTS = ["Latin", "Cyrillic", "Greek", "Arabic", "Hebrew", "Devanagari", "Bengali", "Tamil", "Telugu", "Gujarati", "Gurmukhi", "Georgian", "Armenian"];
+
+/**
+ * The "word character" class used for a boundary next to `ch`, or null for no
+ * boundary. A Latin term only needs Latin letters/digits around it, so "AI" in
+ * "AIで稼ぐ" or "ChatGPT" in "ChatGPTで" still match.
+ */
+function boundaryClass(ch: string): string | null {
+  if (/[\p{N}]/u.test(ch)) return "[\\p{Script=Latin}\\p{N}_]";
+  if (!/[\p{L}_]/u.test(ch)) return null;
+  for (const s of NO_BOUNDARY_SCRIPTS) if (new RegExp(`\\p{Script=${s}}`, "u").test(ch)) return null;
+  for (const s of SPACED_SCRIPTS) {
+    if (new RegExp(`\\p{Script=${s}}`, "u").test(ch)) return `[\\p{Script=${s}}\\p{M}\\p{N}_]`;
+  }
+  return "[\\p{L}\\p{M}\\p{N}_]";
+}
+
+/** Plain catalog term → case-insensitive regex with script-aware word boundaries. */
 export function termRegex(term: string, flags = "iu"): RegExp {
-  let body: string;
   const wildcard = term.endsWith("*");
-  const core = wildcard ? term.slice(0, -1) : term;
-  body = core
-    .split(/\s+/)
-    .map(escapeRegex)
-    .join("[\\s\\-_]+");
-  // "ai generated" should also match "AI-generated"; handled by the joiner above.
-  if (wildcard) body += `${WORD}*`;
-  const start = /^[\p{L}\p{N}_]/u.test(core) ? `(?<!${WORD})` : "";
-  const end = wildcard || !/[\p{L}\p{N}_]$/u.test(core) ? "" : `(?!${WORD})`;
+  const core = (wildcard ? term.slice(0, -1) : term).normalize("NFKC");
+  // "ai generated" also matches "AI-generated" / "ai_generated".
+  let body = core.split(/\s+/).map(escapeRegex).join("[\\s\\-_]+");
+  const first = [...core][0] ?? "";
+  const last = [...core].at(-1) ?? "";
+  const startClass = boundaryClass(first);
+  const endClass = boundaryClass(last);
+  if (wildcard) body += endClass ? `${endClass}*` : "";
+  const start = startClass ? `(?<!${startClass})` : "";
+  const end = wildcard || !endClass ? "" : `(?!${endClass})`;
   return new RegExp(`${start}${body}${end}`, flags);
 }
 

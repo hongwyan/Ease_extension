@@ -14,6 +14,7 @@ export interface StoredExposure {
   ts: number;
   topics: string[];
   excerpt: string;
+  lang?: string;
 }
 
 export type WikiHandler = (route: Route) => Promise<void> | void;

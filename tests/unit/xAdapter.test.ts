@@ -81,11 +81,20 @@ describe("post extraction", () => {
   it.each<[string, FixturePost, string]>([
     ["ads", { ...P, ad: true }, "ad"],
     ["media-only posts", { ...P, text: "", media: true }, "media-only"],
-    ["non-English posts", { ...P, text: "ChatGPT は便利", lang: "ja" }, "not-english"],
-    ["undetermined language", { ...P, text: "🔥🔥", lang: "qme" }, "not-english"],
   ])("excludes %s", (_n, post, reason) => {
     load({ forYou: [post] });
     expect(extractPost(timelinePosts()[0]!)).toMatchObject({ eligible: false, ineligibleReason: reason });
+  });
+
+  it.each<[string, string, string]>([
+    ["Japanese", "ja", "ja"],
+    ["Brazilian Portuguese", "pt-BR", "pt"],
+    ["Indonesian (legacy code)", "in", "id"],
+    ["emoji-only (qme)", "qme", "und"],
+    ["hashtags-only (qht)", "qht", "und"],
+  ])("includes %s posts with a normalized language", (_n, lang, expected) => {
+    load({ forYou: [{ ...P, text: "ChatGPT 🔥", lang }] });
+    expect(extractPost(timelinePosts()[0]!)).toMatchObject({ eligible: true, lang: expected });
   });
 
   it("allows text posts with media attachments", () => {

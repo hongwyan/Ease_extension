@@ -14,7 +14,7 @@ export const WIKI_BASE =
  * Browser clients cannot set User-Agent; Wikimedia's access policy asks them to
  * send Api-User-Agent instead. Contains no user data.
  */
-export const API_USER_AGENT = "XFeedLens/0.1.0 (Chrome extension; local install, no backend)";
+export const API_USER_AGENT = "XFeedLens/0.2.0 (Chrome extension; local install, no backend)";
 
 /** Days requested, ending yesterday (UTC). Leaves room for up to 7 days of publication delay. */
 export const QUERY_DAYS = 21;

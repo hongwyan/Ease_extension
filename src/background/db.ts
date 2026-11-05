@@ -26,6 +26,8 @@ export interface ExposureRecord {
   topics: string[];
   excerpt: string;
   catalogVersion: string;
+  /** Normalized post language. Absent on rows recorded before v0.2, which were English-only. */
+  lang?: string;
 }
 
 export interface CacheRecord {

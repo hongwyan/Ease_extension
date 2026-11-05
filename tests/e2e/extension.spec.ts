@@ -52,22 +52,25 @@ test("full path: enable in popup → scroll → persisted history → click Feed
 
   const page = await h.openHome({ forYou: [CHATGPT, UNKNOWN, CLAUDE, MULTI, AD, MEDIA, JAPANESE], topSpacer: SPACER });
 
-  // Buttons only on supported posts (including the unknown-topic one), never on ads, media-only, non-English or the sidebar.
-  await expect(page.locator("x-feed-lens-button")).toHaveCount(4);
-  for (const p of [AD, MEDIA, JAPANESE]) await expect(button(page, p.id)).toHaveCount(0);
+  // Buttons on every text post in any language (including the unknown-topic one), never on ads, media-only or the sidebar.
+  await expect(page.locator("x-feed-lens-button")).toHaveCount(5);
+  await expect(button(page, JAPANESE.id)).toHaveCount(1);
+  for (const p of [AD, MEDIA]) await expect(button(page, p.id)).toHaveCount(0);
   await expect(page.locator('[data-testid="sidebarColumn"] x-feed-lens-button')).toHaveCount(0);
 
   for (const p of [CHATGPT, UNKNOWN, CLAUDE, MULTI, AD, MEDIA, JAPANESE]) {
     await scrollToPost(page, p.id);
     await settle(page);
   }
-  await expect.poll(() => h.statusIds()).toEqual([CHATGPT.id, UNKNOWN.id, CLAUDE.id, MULTI.id].sort());
+  await expect.poll(() => h.statusIds()).toEqual([CHATGPT.id, UNKNOWN.id, CLAUDE.id, MULTI.id, JAPANESE.id].sort());
   const rows = await h.exposures();
   const byId = Object.fromEntries(rows.map((r) => [r.statusId, r]));
   expect(byId[CHATGPT.id]).toMatchObject({ author: "alice", topics: ["chatgpt"] });
   expect(byId[UNKNOWN.id]!.topics).toEqual([]); // unknown topic still in the denominator
   expect(byId[CLAUDE.id]!.topics).toEqual(["claude-ai"]);
   expect(byId[MULTI.id]!.topics).toEqual(["chatgpt", "ai-earnings"]);
+  expect(byId[JAPANESE.id]).toMatchObject({ lang: "ja", topics: ["chatgpt"] });
+  expect(byId[CHATGPT.id]!.lang).toBe("en");
   expect(new Set(rows.map((r) => r.sessionId)).size).toBe(1);
   expect(byId[CHATGPT.id]!.excerpt.length).toBeLessThanOrEqual(141);
 
@@ -78,15 +81,26 @@ test("full path: enable in popup → scroll → persisted history → click Feed
   const pnl = panel(page);
   await expect(pnl).toBeVisible();
   await expect(pnl.getByTestId("fl-topic")).toHaveText("ChatGPT");
-  await expect(pnl.getByTestId("fl-share-current")).toHaveText("50%");
-  await expect(pnl.getByTestId("fl-share-current-detail")).toContainText("2 of 4 eligible English text posts");
-  await expect(pnl.getByTestId("fl-change")).toHaveText("No comparison yet");
-  await expect(pnl.getByTestId("fl-sentence")).toHaveText(
-    "2 of 4 recorded posts (50%) in the last 7 days mentioned ChatGPT; no comparison yet, because no posts were recorded in the previous 7 days.",
+  // Two matches: within the post's language (English) and across all languages.
+  await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("English");
+  await expect(pnl.getByTestId("fl-scope-all")).toHaveText("All languages");
+  await expect(pnl.getByTestId("fl-share-lang")).toHaveText("50%");
+  await expect(pnl.getByTestId("fl-share-lang-detail")).toHaveText("2 of 4");
+  await expect(pnl.getByTestId("fl-share-all")).toHaveText("60%");
+  await expect(pnl.getByTestId("fl-share-all-detail")).toHaveText("3 of 5");
+  await expect(pnl.getByTestId("fl-change-lang")).toHaveText("No comparison yet");
+  await expect(pnl.getByTestId("fl-change-all")).toHaveText("No comparison yet");
+  await expect(pnl.getByTestId("fl-sentence-lang")).toHaveText(
+    "2 of 4 recorded English posts (50%) in the last 7 days mentioned ChatGPT; no comparison yet, because no English posts were recorded in the previous 7 days.",
   );
-  await expect(pnl.getByTestId("fl-repeated")).toHaveText("100%");
-  await expect(pnl.getByTestId("fl-repeated-detail")).toContainText("2 distinct known authors");
-  await expect(pnl.getByTestId("fl-partial").first()).toContainText("Partial period");
+  await expect(pnl.getByTestId("fl-sentence-all")).toHaveText(
+    "3 of 5 recorded posts across all languages (60%) in the last 7 days mentioned ChatGPT; no comparison yet, because no posts across all languages were recorded in the previous 7 days.",
+  );
+  await expect(pnl.getByTestId("fl-repeated-lang")).toHaveText("100%");
+  await expect(pnl.getByTestId("fl-repeated-lang-detail")).toHaveText("2 of 2 · 2 authors");
+  await expect(pnl.getByTestId("fl-repeated-all")).toHaveText("66.7%");
+  await expect(pnl.getByTestId("fl-repeated-all-detail")).toHaveText("2 of 3 · 3 authors");
+  await expect(pnl.getByTestId("fl-partial")).toContainText("Last 7 days is a partial period");
   expect(await page.evaluate(() => (window as any).__fx.navigations)).toEqual([]);
   expect(page.url()).toBe("https://x.com/home");
 
@@ -105,11 +119,21 @@ test("full path: enable in popup → scroll → persisted history → click Feed
   const why = pnl.getByTestId("fl-why");
   await expect(why).toContainText("Matched terms in this post: chatgpt");
   await expect(why).toContainText("Inclusion rule:");
-  await expect(pnl.getByTestId("fl-sample")).toContainText("4 eligible English text posts in the last 7 days, 0 in the previous 7 days");
+  await expect(why.getByTestId("fl-post-language")).toContainText("Post language: English");
+  await expect(pnl.getByTestId("fl-sample")).toContainText(
+    "English: 4 posts in the last 7 days, 0 in the previous 7 days. All languages: 5 and 0",
+  );
   const links = pnl.getByTestId("fl-evidence").locator("a");
-  await expect(links).toHaveCount(2);
+  await expect(links).toHaveCount(3);
   const hrefs = await links.evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).href));
-  expect(hrefs.sort()).toEqual([`https://x.com/alice/status/${CHATGPT.id}`, `https://x.com/dave/status/${MULTI.id}`].sort());
+  expect(hrefs.sort()).toEqual(
+    [
+      `https://x.com/alice/status/${CHATGPT.id}`,
+      `https://x.com/dave/status/${MULTI.id}`,
+      `https://x.com/fumi/status/${JAPANESE.id}`,
+    ].sort(),
+  );
+  await expect(pnl.getByTestId("fl-evidence")).toContainText("@fumi · Japanese");
 
   // Escape closes and restores focus to the button.
   await page.keyboard.press("Escape");
@@ -133,7 +157,8 @@ test("full path: enable in popup → scroll → persisted history → click Feed
   await expect(chips.nth(0)).toHaveAttribute("aria-pressed", "true");
   await chips.nth(1).click();
   await expect(chips.nth(1)).toHaveAttribute("aria-pressed", "true");
-  await expect(panel(page).getByTestId("fl-share-current-detail")).toContainText("1 of 4");
+  await expect(panel(page).getByTestId("fl-share-lang-detail")).toHaveText("1 of 4");
+  await expect(panel(page).getByTestId("fl-share-all-detail")).toHaveText("1 of 5");
   await expect(panel(page).getByTestId("fl-trend-status")).toContainText("No comparable public series");
   await page.keyboard.press("Escape");
 
@@ -154,8 +179,12 @@ test("unknown topic: explains coverage; post still counts in the denominator", a
   await button(page, UNKNOWN.id).click();
   const pnl = panel(page);
   await expect(pnl.getByTestId("fl-topic")).toHaveText("No recognized topic");
-  await expect(pnl.getByTestId("fl-total-current")).toHaveText("2");
-  await expect(pnl.getByTestId("fl-sentence")).toContainText("1 of 2 recorded posts (50%) in the last 7 days also matched no topic");
+  await expect(pnl.getByTestId("fl-total-lang")).toHaveText("2");
+  await expect(pnl.getByTestId("fl-total-all")).toHaveText("2");
+  await expect(pnl.getByTestId("fl-sentence-unknown")).toHaveText("This post matched no catalog topic.");
+  await expect(pnl.getByTestId("fl-sentence-lang")).toContainText(
+    "1 of 2 recorded English posts (50%) in the last 7 days also matched no topic",
+  );
   await pnl.getByText("Why this result?").click();
   await expect(pnl.getByTestId("fl-coverage")).toContainText("recognizes 3 topics: ChatGPT, Claude AI, Earning money with AI");
   await expect(pnl.getByTestId("fl-trend")).toHaveCount(0);
@@ -220,7 +249,7 @@ test("duplicate delivery: duplicate cards and repeated/overlapping messages stor
     `(async () => {
       const r = await chrome.storage.local.get("settings");
       const msg = { type: "exposure", sessionId: crypto.randomUUID(), statusId: "1857000000000000009",
-        author: "zed", text: "ChatGPT duplicate delivery", epoch: r.settings.epoch };
+        author: "zed", text: "ChatGPT duplicate delivery", lang: "en", epoch: r.settings.epoch };
       return Promise.all(Array.from({ length: 8 }, () => chrome.runtime.sendMessage(msg)));
     })()`,
   );
@@ -255,7 +284,7 @@ test("service-worker restart preserves history and deduplication", async () => {
       `(async () => {
         const r = await chrome.storage.local.get("settings");
         return chrome.runtime.sendMessage({ type: "exposure", sessionId: "00000000-0000-4000-8000-000000000000",
-          statusId: "${CHATGPT.id}", author: "alice", text: "ChatGPT", epoch: r.settings.epoch });
+          statusId: "${CHATGPT.id}", author: "alice", text: "ChatGPT", lang: "en", epoch: r.settings.epoch });
       })()`,
     );
 
@@ -275,7 +304,7 @@ test("service-worker restart preserves history and deduplication", async () => {
   expect((await h.exposures()).length).toBe(2);
   await ext.close();
   await button(page, CHATGPT.id).click();
-  await expect(panel(page).getByTestId("fl-share-current-detail")).toContainText("2 of 2");
+  await expect(panel(page).getByTestId("fl-share-all-detail")).toHaveText("2 of 2");
 });
 
 test("background tab cancels a pending timer; returning restarts the dwell", async () => {
@@ -367,7 +396,7 @@ test("delete while a timer is pending removes everything and nothing is resurrec
   await scrollToPost(page, CHATGPT.id);
   await expect.poll(() => h.statusIds()).toEqual([CHATGPT.id]);
   const popup = await h.popup();
-  await expect(popup.getByTestId("rec-stats")).toContainText("1 eligible English text post recorded");
+  await expect(popup.getByTestId("rec-stats")).toContainText("1 eligible text post recorded");
   await scrollToPost(page, CLAUDE.id);
   await page.waitForTimeout(300);
   await popup.getByTestId("del").click();
@@ -416,22 +445,104 @@ test("seeded history 12/80 vs 3/75 renders 15%, 4% and +11 percentage points", a
   await scrollToPost(page, CHATGPT.id);
   await button(page, CHATGPT.id).click();
   const pnl = panel(page);
-  await expect(pnl.getByTestId("fl-share-current")).toHaveText("15%");
-  await expect(pnl.getByTestId("fl-share-current-detail")).toContainText("12 of 80 eligible English text posts");
-  await expect(pnl.getByTestId("fl-share-previous")).toHaveText("4%");
-  await expect(pnl.getByTestId("fl-share-previous-detail")).toContainText("3 of 75 (4%)");
-  await expect(pnl.getByTestId("fl-change")).toHaveText("+11 pp");
-  await expect(pnl.getByTestId("fl-sentence")).toHaveText(
-    "12 of 80 recorded posts (15%) in the last 7 days mentioned ChatGPT, up from 3 of 75 (4%) in the previous 7 days.",
+  // Seeded rows predate language tracking, so they count as English: both scopes agree.
+  for (const sc of ["lang", "all"]) {
+    await expect(pnl.getByTestId(`fl-share-${sc}`)).toHaveText("15%");
+    await expect(pnl.getByTestId(`fl-share-${sc}-detail`)).toHaveText("12 of 80");
+    await expect(pnl.getByTestId(`fl-prev-${sc}`)).toHaveText("4%");
+    await expect(pnl.getByTestId(`fl-prev-${sc}-detail`)).toHaveText("3 of 75");
+    await expect(pnl.getByTestId(`fl-change-${sc}`)).toHaveText("+11 pp");
+    // 12 ChatGPT rows over 5 authors: a1 and a2 have 3 each, so the top two = 6 of 12.
+    await expect(pnl.getByTestId(`fl-repeated-${sc}`)).toHaveText("50%");
+    await expect(pnl.getByTestId(`fl-repeated-${sc}-detail`)).toHaveText("6 of 12 · 5 authors");
+  }
+  await expect(pnl.getByTestId("fl-sentence-lang")).toHaveText(
+    "12 of 80 recorded English posts (15%) in the last 7 days mentioned ChatGPT, up from 3 of 75 (4%) in the previous 7 days.",
+  );
+  await expect(pnl.getByTestId("fl-sentence-all")).toHaveText(
+    "12 of 80 recorded posts across all languages (15%) in the last 7 days mentioned ChatGPT, up from 3 of 75 (4%) in the previous 7 days.",
   );
   await expect(pnl.getByTestId("fl-partial")).toHaveCount(0);
-  // 12 ChatGPT rows over 5 authors: a1,a2,a3 have 3,3,2... top two = 3 + 3 = 6 of 12.
-  await expect(pnl.getByTestId("fl-repeated")).toHaveText("50%");
-  await expect(pnl.getByTestId("fl-repeated-detail")).toContainText("5 distinct known authors");
   await pnl.getByText("Why this result?").click();
   await expect(pnl.getByTestId("fl-evidence").locator("li")).toHaveCount(3);
   await page.screenshot({ path: "e2e-screens/seeded-12-80.png" });
 });
+
+test("all languages: every text post gets a button; panel shows this language and all languages", async () => {
+  await h.enableRecording();
+  const JA_CHATGPT = tall({ id: "1860000000000000001", author: "kenji", text: "ChatGPTで会議の資料を作った", lang: "ja" });
+  const JA_EARN = tall({ id: "1860000000000000002", author: "yuki", text: "AIで月収30万円稼いだ方法", lang: "ja" });
+  const JA_OTHER = tall({ id: "1860000000000000003", author: "haru", text: "今日はいい天気ですね", lang: "ja" });
+  const ES_CHATGPT = tall({ id: "1860000000000000004", author: "lucia", text: "Le pregunté a ChatGPT por la receta", lang: "es" });
+  const EMOJI = tall({ id: "1860000000000000005", author: "fire", text: "🔥🔥🔥", lang: "qme" });
+  const PT_BR = tall({ id: "1860000000000000006", author: "ana", text: "Ganhei R$ 2.000 de renda extra usando inteligência artificial", lang: "pt-BR" });
+  const posts = [JA_CHATGPT, JA_EARN, JA_OTHER, ES_CHATGPT, EMOJI, PT_BR, CHATGPT];
+  const page = await h.openHome({ forYou: posts, topSpacer: SPACER });
+  await expect(page.locator("x-feed-lens-button")).toHaveCount(posts.length);
+  for (const p of posts) {
+    await scrollToPost(page, p.id);
+    await settle(page);
+  }
+  await expect.poll(() => h.statusIds()).toEqual(posts.map((p) => p.id).sort());
+  const byId = Object.fromEntries((await h.exposures()).map((r) => [r.statusId, r]));
+  expect(byId[JA_CHATGPT.id]).toMatchObject({ lang: "ja", topics: ["chatgpt"] });
+  expect(byId[JA_EARN.id]).toMatchObject({ lang: "ja", topics: ["ai-earnings"] });
+  expect(byId[JA_OTHER.id]).toMatchObject({ lang: "ja", topics: [] });
+  expect(byId[ES_CHATGPT.id]).toMatchObject({ lang: "es", topics: ["chatgpt"] });
+  expect(byId[EMOJI.id]).toMatchObject({ lang: "und", topics: [] });
+  expect(byId[PT_BR.id]).toMatchObject({ lang: "pt", topics: ["ai-earnings"] });
+
+  // Japanese ChatGPT post: 1 of 3 Japanese posts, 3 of 7 posts in all languages.
+  await scrollToPost(page, JA_CHATGPT.id);
+  await button(page, JA_CHATGPT.id).click();
+  let pnl = panel(page);
+  await expect(pnl.getByTestId("fl-topic")).toHaveText("ChatGPT");
+  await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("Japanese");
+  await expect(pnl.getByTestId("fl-share-lang")).toHaveText("33.3%");
+  await expect(pnl.getByTestId("fl-share-lang-detail")).toHaveText("1 of 3");
+  await expect(pnl.getByTestId("fl-share-all")).toHaveText("42.9%");
+  await expect(pnl.getByTestId("fl-share-all-detail")).toHaveText("3 of 7");
+  await expect(pnl.getByTestId("fl-sentence-lang")).toContainText("1 of 3 recorded Japanese posts (33.3%) in the last 7 days mentioned ChatGPT");
+  await expect(pnl.getByTestId("fl-sentence-all")).toContainText("3 of 7 recorded posts across all languages (42.9%)");
+  await pnl.getByText("Why this result?").click();
+  await expect(pnl.getByTestId("fl-post-language")).toContainText("Post language: Japanese");
+  await expect(pnl.getByTestId("fl-vocab-note")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  // Japanese earnings claim: 1 of 3 Japanese, 2 of 7 overall (with the Portuguese one).
+  await scrollToPost(page, JA_EARN.id);
+  await button(page, JA_EARN.id).click();
+  pnl = panel(page);
+  await expect(pnl.getByTestId("fl-topic")).toHaveText("Earning money with AI");
+  await expect(pnl.getByTestId("fl-share-lang-detail")).toHaveText("1 of 3");
+  await expect(pnl.getByTestId("fl-share-all-detail")).toHaveText("2 of 7");
+  await page.keyboard.press("Escape");
+
+  // Region subtag is grouped with its language.
+  await scrollToPost(page, PT_BR.id);
+  await button(page, PT_BR.id).click();
+  pnl = panel(page);
+  await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("Portuguese");
+  await expect(pnl.getByTestId("fl-share-lang-detail")).toHaveText("1 of 1");
+  await page.keyboard.press("Escape");
+
+  // Emoji-only text: undetermined language, still counted, no topic.
+  await scrollToPost(page, EMOJI.id);
+  await button(page, EMOJI.id).click();
+  pnl = panel(page);
+  await expect(pnl.getByTestId("fl-topic")).toHaveText("No recognized topic");
+  await expect(pnl.getByTestId("fl-scope-lang")).toHaveText("Undetermined language");
+  await expect(pnl.getByTestId("fl-total-lang")).toHaveText("1");
+  await expect(pnl.getByTestId("fl-total-all")).toHaveText("7");
+  await page.screenshot({ path: "e2e-screens/multilingual-emoji.png" });
+  await page.keyboard.press("Escape");
+
+  await scrollToPost(page, JA_CHATGPT.id);
+  await button(page, JA_CHATGPT.id).click();
+  await page.screenshot({ path: "e2e-screens/multilingual-ja.png" });
+  expect(await page.evaluate(() => (window as any).__fx.navigations)).toEqual([]);
+});
+
 
 test.describe("public trend", () => {
   const range = queryRange(Date.now());
@@ -506,12 +617,12 @@ test.describe("public trend", () => {
     await expect.poll(() => h.statusIds()).toEqual([CHATGPT.id]);
     const t0 = Date.now();
     await button(page, CHATGPT.id).click();
-    await expect(panel(page).getByTestId("fl-share-current")).toHaveText("100%");
+    await expect(panel(page).getByTestId("fl-share-lang")).toHaveText("100%");
     expect(Date.now() - t0).toBeLessThan(1500);
     await expect(panel(page).getByTestId("fl-trend-status")).toHaveText("Looking up public pageviews…");
     release();
     await expect(panel(page).getByTestId("fl-trend-status")).toContainText("no pageview data");
-    await expect(panel(page).getByTestId("fl-share-current")).toHaveText("100%");
+    await expect(panel(page).getByTestId("fl-share-lang")).toHaveText("100%");
   });
 
   test("offline with no cache shows an error, personal numbers still render", async () => {
@@ -524,7 +635,7 @@ test.describe("public trend", () => {
     await expect.poll(() => h.statusIds()).toEqual([CHATGPT.id]);
     await button(page, CHATGPT.id).click();
     await expect(panel(page).getByTestId("fl-trend-status")).toContainText("Could not reach Wikimedia");
-    await expect(panel(page).getByTestId("fl-share-current")).toHaveText("100%");
+    await expect(panel(page).getByTestId("fl-share-lang")).toHaveText("100%");
   });
 });
 

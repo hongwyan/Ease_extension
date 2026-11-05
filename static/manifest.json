@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X Feed Lens",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One click on an X post shows how often its topic appears in your For you feed, how that changed, and an independent public signal.",
   "minimum_chrome_version": "120",
   "permissions": ["storage"],

@@ -1,6 +1,6 @@
 {
   "name": "x-feed-lens",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Chrome MV3 extension: one-click feed context for English text posts on X.",
   "type": "module",

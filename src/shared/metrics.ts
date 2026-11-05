@@ -17,6 +17,15 @@ export interface ExposureLike {
   author: string | null;
   topics: string[];
   excerpt?: string;
+  /** Normalized post language. Missing on rows recorded before v0.2 (English-only then). */
+  lang?: string;
+}
+
+/** Rows recorded before multilingual support were English-only by construction. */
+export const LEGACY_LANG = "en";
+
+export function langOf(r: ExposureLike): string {
+  return r.lang ?? LEGACY_LANG;
 }
 
 export interface Period {
@@ -221,4 +230,35 @@ export function computePanelMetrics(
 
 export function round1(x: number): number {
   return Math.round(x * 10) / 10;
+}
+
+export interface ScopedMetrics {
+  /** The clicked post's language. */
+  lang: string;
+  /** Metrics where every denominator is posts in `lang` only. */
+  language: PanelMetrics;
+  /** Metrics where every denominator is posts in all languages. */
+  all: PanelMetrics;
+}
+
+/** Same metrics twice: within the post's language, and across all languages. */
+export function computeScopedMetrics(
+  rows: ExposureLike[],
+  topicIds: string[],
+  lang: string,
+  now: number,
+  trackingSince: number | null,
+  pauses: PauseInterval[] = [],
+): ScopedMetrics {
+  return {
+    lang,
+    language: computePanelMetrics(
+      rows.filter((r) => langOf(r) === lang),
+      topicIds,
+      now,
+      trackingSince,
+      pauses,
+    ),
+    all: computePanelMetrics(rows, topicIds, now, trackingSince, pauses),
+  };
 }

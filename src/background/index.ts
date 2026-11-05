@@ -9,7 +9,7 @@ import {
   type StatusResponse,
   type TrendResponse,
 } from "../shared/messages";
-import { comparisonPeriods, computePanelMetrics } from "../shared/metrics";
+import { comparisonPeriods, computeScopedMetrics } from "../shared/metrics";
 import { getSettings, patchSettings } from "../shared/settings";
 import { FeedStore } from "./db";
 import { TrendService } from "./trend";
@@ -58,6 +58,7 @@ async function handle(msg: RequestMessage): Promise<unknown> {
           topics,
           excerpt: makeExcerpt(msg.text),
           catalogVersion: CATALOG_VERSION,
+          lang: msg.lang,
         },
         msg.epoch,
         now,
@@ -69,7 +70,7 @@ async function handle(msg: RequestMessage): Promise<unknown> {
     case "panel": {
       const { previous } = comparisonPeriods(now);
       const [rows, meta] = await Promise.all([store.exposuresSince(previous.start, now), store.getMeta()]);
-      const metrics = computePanelMetrics(rows, msg.topicIds, now, meta.trackingSince, meta.pauses);
+      const metrics = computeScopedMetrics(rows, msg.topicIds, msg.lang, now, meta.trackingSince, meta.pauses);
       const res: PanelResponse = { ok: true, metrics };
       return res;
     }

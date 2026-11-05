@@ -7,6 +7,7 @@ const good = {
   statusId: "1854000000000000001",
   author: "alice_1",
   text: "hello",
+  lang: "ja",
   epoch: 0,
 };
 
@@ -22,6 +23,8 @@ describe("validateMessage", () => {
     ["empty text", { ...good, text: "  " }],
     ["huge text", { ...good, text: "x".repeat(5000) }],
     ["bad epoch", { ...good, epoch: -1 }],
+    ["missing language", { ...good, lang: undefined }],
+    ["malformed language", { ...good, lang: "ja-JP; drop" }],
     ["unknown type", { type: "drop-tables" }],
     ["not an object", "exposure"],
   ])("rejects %s", (_n, m) => expect(validateMessage(m)).toBeNull());
@@ -29,8 +32,13 @@ describe("validateMessage", () => {
   it("accepts a null author", () => expect(validateMessage({ ...good, author: null })).not.toBeNull());
 
   it("only accepts catalog topic IDs for panel and trend requests", () => {
-    expect(validateMessage({ type: "panel", topicIds: ["chatgpt", "chatgpt"] })).toEqual({ type: "panel", topicIds: ["chatgpt"] });
-    expect(validateMessage({ type: "panel", topicIds: ["evil"] })).toBeNull();
+    expect(validateMessage({ type: "panel", topicIds: ["chatgpt", "chatgpt"], lang: "en" })).toEqual({
+      type: "panel",
+      topicIds: ["chatgpt"],
+      lang: "en",
+    });
+    expect(validateMessage({ type: "panel", topicIds: ["evil"], lang: "en" })).toBeNull();
+    expect(validateMessage({ type: "panel", topicIds: ["chatgpt"] })).toBeNull();
     expect(validateMessage({ type: "trend", topicId: "claude-ai" })).toEqual({ type: "trend", topicId: "claude-ai" });
     expect(validateMessage({ type: "trend", topicId: "../x" })).toBeNull();
   });

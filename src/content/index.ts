@@ -42,6 +42,7 @@ const tracker = new ExposureTracker({
       statusId: info.statusId,
       author: info.author,
       text: info.text.slice(0, MAX_TEXT),
+      lang: info.lang,
       epoch,
     });
     if (r?.ok && (r.recorded || r.reason === "duplicate")) return "stored";
@@ -120,7 +121,7 @@ function togglePanel(post: HTMLElement, host: HTMLElement, btn: HTMLButtonElemen
     classification,
     recording: settings.recording,
     theme: detectTheme(),
-    requestMetrics: (topicIds) => send<PanelResponse>({ type: "panel", topicIds }),
+    requestMetrics: (topicIds) => send<PanelResponse>({ type: "panel", topicIds, lang: info.lang }),
     requestTrend: async (topicId): Promise<TrendResult | null> =>
       (await send<TrendResponse>({ type: "trend", topicId }))?.result ?? null,
     onClose: () => btn.setAttribute("aria-expanded", "false"),

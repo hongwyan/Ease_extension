@@ -1,5 +1,6 @@
 import { TOPIC_IDS } from "./catalog";
-import type { PanelMetrics } from "./metrics";
+import { isLangCode } from "./language";
+import type { ScopedMetrics } from "./metrics";
 import type { TrendResult } from "./wiki";
 
 /** Max characters of visible post text sent from the content script for classification. */
@@ -14,6 +15,8 @@ export interface ExposureMessage {
   author: string | null;
   /** Visible outer-post text; classified in the service worker, only an excerpt is stored. */
   text: string;
+  /** Normalized post language from X's lang attribute ("en", "ja", … "und"). */
+  lang: string;
   /** Data epoch the content script last saw; stale epochs are rejected (deleted data stays deleted). */
   epoch: number;
 }
@@ -21,6 +24,8 @@ export interface ExposureMessage {
 export interface PanelRequest {
   type: "panel";
   topicIds: string[];
+  /** The clicked post's language; metrics are returned for it and for all languages. */
+  lang: string;
 }
 
 export interface TrendRequest {
@@ -57,7 +62,7 @@ export type ExposureResult =
 
 export interface PanelResponse {
   ok: true;
-  metrics: PanelMetrics;
+  metrics: ScopedMetrics;
 }
 
 export interface StatusResponse {
@@ -85,19 +90,21 @@ export function validateMessage(raw: unknown): RequestMessage | null {
   if (!isObj(raw) || typeof raw.type !== "string") return null;
   switch (raw.type) {
     case "exposure": {
-      const { sessionId, statusId, author, text, epoch } = raw;
+      const { sessionId, statusId, author, text, epoch, lang } = raw;
       if (typeof sessionId !== "string" || !UUID.test(sessionId)) return null;
       if (typeof statusId !== "string" || !STATUS_ID.test(statusId)) return null;
       if (author !== null && (typeof author !== "string" || !HANDLE.test(author))) return null;
       if (typeof text !== "string" || text.trim().length === 0 || text.length > MAX_TEXT) return null;
       if (typeof epoch !== "number" || !Number.isInteger(epoch) || epoch < 0) return null;
-      return { type: "exposure", sessionId, statusId, author, text, epoch };
+      if (!isLangCode(lang)) return null;
+      return { type: "exposure", sessionId, statusId, author, text, lang, epoch };
     }
     case "panel": {
       const ids = raw.topicIds;
       if (!Array.isArray(ids) || ids.length > TOPIC_IDS.length) return null;
       if (!ids.every((id) => typeof id === "string" && TOPIC_IDS.includes(id))) return null;
-      return { type: "panel", topicIds: [...new Set(ids as string[])] };
+      if (!isLangCode(raw.lang)) return null;
+      return { type: "panel", topicIds: [...new Set(ids as string[])], lang: raw.lang };
     }
     case "trend": {
       if (typeof raw.topicId !== "string" || !TOPIC_IDS.includes(raw.topicId)) return null;

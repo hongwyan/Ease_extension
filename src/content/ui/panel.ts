@@ -1,15 +1,17 @@
 import { CATALOG_VERSION, TOPICS, topicById } from "../../shared/catalog";
 import type { Classification } from "../../shared/classify";
 import { formatDateTime, formatDay, formatInt, formatPct, formatPeriod, formatPp, formatUtcDay } from "../../shared/format";
-import { interpretTopic, interpretUnknown } from "../../shared/interpret";
+import { ALL_LANGUAGES_NOUN, interpretTopic, interpretUnknown, languageNoun } from "../../shared/interpret";
+import { languageName } from "../../shared/language";
 import type { PanelResponse } from "../../shared/messages";
 import {
   MIN_SAMPLE_FOR_DIRECTION,
   RETENTION_DAYS,
+  langOf,
   type ExposureLike,
   type PanelMetrics,
   type PeriodInfo,
-  type TopicMetrics,
+  type ScopedMetrics,
 } from "../../shared/metrics";
 import type { TrendResult, WikiTrend } from "../../shared/wiki";
 import type { PostInfo } from "../xAdapter";
@@ -28,14 +30,23 @@ export interface PanelOpenArgs {
   onClose(): void;
 }
 
-const DENOMINATOR = "eligible English text posts";
+type ScopeKey = "lang" | "all";
+
+interface Scope {
+  key: ScopeKey;
+  /** Column header, e.g. "Japanese" / "All languages". */
+  header: string;
+  /** Sentence noun, e.g. "Japanese posts" / "posts across all languages". */
+  noun: string;
+  m: PanelMetrics;
+}
 
 export class FeedPanel {
   private host: HTMLElement | null = null;
   private root: ShadowRoot | null = null;
   private args: PanelOpenArgs | null = null;
   private selected: string | null = null;
-  private metrics: PanelMetrics | null = null;
+  private metrics: ScopedMetrics | null = null;
   private metricsState: "loading" | "ok" | "error" = "loading";
   private trends = new Map<string, TrendResult | "loading">();
   private body: HTMLElement | null = null;
@@ -238,8 +249,10 @@ export class FeedPanel {
       b.append(h("p", { class: "note" }, "Could not read local history. Reload the page and try again."));
       return;
     }
-    const m = this.metrics;
-    const empty = m.currentTotal === 0 && m.previousTotal === 0;
+    const sm = this.metrics;
+    const scopes = this.scopes(sm);
+    const all = sm.all;
+    const empty = all.currentTotal === 0 && all.previousTotal === 0;
     if (empty) {
       b.append(
         h(
@@ -251,109 +264,139 @@ export class FeedPanel {
         ),
       );
     }
-    const topic = this.selected ? m.topics.find((t) => t.topicId === this.selected) : undefined;
     if (!empty) {
-      if (topic) b.append(this.metricsSection(topic, m));
-      else b.append(this.unknownSection(m));
+      if (this.selected) b.append(this.metricsSection(this.selected, scopes));
+      else b.append(this.unknownSection(scopes));
     }
     if (this.selected) b.append(this.trendSection(this.selected));
-    b.append(this.whySection(m, topic));
+    b.append(this.whySection(scopes));
     this.position();
   }
 
-  private metricsSection(t: TopicMetrics, m: PanelMetrics): HTMLElement {
-    const def = topicById(t.topicId)!;
-    const s = h("section", { "data-testid": "fl-metrics" });
-    s.append(h("h3", {}, "Your feed"));
-    s.append(
-      h(
-        "div",
-        { class: "metric" },
-        h("span", { class: "name" }, "Feed share"),
-        h("span", { class: "value", "data-testid": "fl-share-current" }, formatPct(t.current.pct)),
-        h(
-          "span",
-          { class: "detail", "data-testid": "fl-share-current-detail" },
-          `${t.current.matching} of ${t.current.total} ${DENOMINATOR} · ${periodLabel(m.current)}`,
-        ),
-        periodNote(m.current),
-      ),
-    );
-    const changeValue =
-      t.change.status === "none"
-        ? "No comparison yet"
-        : t.change.status === "insufficient"
-          ? "Not assessed"
-          : `${formatPp(t.change.pp!)} pp`;
-    const changeDetail =
-      t.change.status === "insufficient"
-        ? `Fewer than ${MIN_SAMPLE_FOR_DIRECTION} recorded posts in a period, so no direction is stated. Raw difference ${formatPp(t.change.pp!)} percentage points.`
-        : t.change.status === "ok"
-          ? `${formatPp(t.change.pp!)} percentage points (current share minus previous share).`
-          : m.previousTotal === 0
-            ? "Nothing was recorded in the previous 7 days."
-            : "Nothing recorded yet in the last 7 days.";
-    s.append(
-      h(
-        "div",
-        { class: "metric" },
-        h("span", { class: "name" }, "Change"),
-        h("span", { class: "value", "data-testid": "fl-change" }, changeValue),
-        h("span", { class: "detail" }, changeDetail),
-        h(
-          "span",
-          { class: "detail", "data-testid": "fl-share-previous-detail" },
-          `Previous 7 days (${formatPeriod(m.previous.start, m.previous.end)}): ${t.previous.matching} of ${t.previous.total} (${formatPct(t.previous.pct)})`,
-        ),
-        h("span", { class: "detail", "data-testid": "fl-share-previous", hidden: true }, formatPct(t.previous.pct)),
-        periodNote(m.previous),
-      ),
-    );
-    const r = t.repeated;
-    let repValue = "—";
-    let repDetail = "No exposures for this topic in the last 7 days.";
-    if (r.topicExposures > 0) {
-      if (r.knownAuthorExposures === 0) {
-        repValue = "Unavailable";
-        repDetail = "No author handles were captured for these posts.";
-      } else {
-        repValue = formatPct(r.pct);
-        const who = r.topAuthors.map((a) => `@${a.author} (${a.count})`).join(", ");
-        repDetail =
-          `${r.topTwoExposures} of ${r.topicExposures} ${def.label} exposures came from the two most frequent authors: ${who}. ` +
-          `${r.distinctKnownAuthors} distinct known author${r.distinctKnownAuthors === 1 ? "" : "s"}.`;
-        if (!r.fullCoverage) {
-          repDetail += ` Author known for ${r.knownAuthorExposures} of ${r.topicExposures} exposures; unknown authors are not attributed.`;
-        }
+  private scopes(sm: ScopedMetrics): Scope[] {
+    const name = languageName(sm.lang);
+    return [
+      { key: "lang", header: sm.lang === "und" ? "Undetermined language" : name, noun: languageNoun(sm.lang, name), m: sm.language },
+      { key: "all", header: "All languages", noun: ALL_LANGUAGES_NOUN, m: sm.all },
+    ];
+  }
+
+  /** Header row + one row per metric, one column per scope. */
+  private table(rows: { label: string; detail?: string; cells: (sc: Scope) => [string, string, string] }[], scopes: Scope[]): HTMLElement {
+    const table = h("table", { class: "scopes", "data-testid": "fl-scopes" });
+    const head = h("tr", {}, h("th", { scope: "col" }, ""));
+    for (const sc of scopes) head.append(h("th", { scope: "col", "data-testid": `fl-scope-${sc.key}` }, sc.header));
+    table.append(h("thead", {}, head));
+    const body = h("tbody");
+    for (const row of rows) {
+      const tr = h("tr", {}, h("th", { scope: "row" }, row.label, row.detail ? h("span", { class: "sub" }, row.detail) : null));
+      for (const sc of scopes) {
+        const [testId, value, detail] = row.cells(sc);
+        tr.append(
+          h(
+            "td",
+            {},
+            h("span", { class: /^[\d+−—]/.test(value) ? "value" : "value word", "data-testid": `${testId}-${sc.key}` }, value),
+            h("span", { class: "sub", "data-testid": `${testId}-${sc.key}-detail` }, detail),
+          ),
+        );
       }
+      body.append(tr);
     }
+    table.append(body);
+    return table;
+  }
+
+  private metricsSection(topicId: string, scopes: Scope[]): HTMLElement {
+    const def = topicById(topicId)!;
+    const tm = (sc: Scope) => sc.m.topics.find((t) => t.topicId === topicId)!;
+    const p = scopes[1]!.m;
+    const s = h("section", { "data-testid": "fl-metrics" });
+    s.append(h("h3", {}, `Your feed · ${periodLabel(p.current)}`));
     s.append(
-      h(
-        "div",
-        { class: "metric" },
-        h("span", { class: "name" }, "Repeated sources"),
-        h("span", { class: "value", "data-testid": "fl-repeated" }, repValue),
-        h("span", { class: "detail", "data-testid": "fl-repeated-detail" }, repDetail),
+      this.table(
+        [
+          {
+            label: "Feed share",
+            detail: "last 7 days",
+            cells: (sc) => {
+              const t = tm(sc);
+              return ["fl-share", formatPct(t.current.pct), `${t.current.matching} of ${t.current.total}`];
+            },
+          },
+          {
+            label: "Previous 7 days",
+            detail: formatPeriod(p.previous.start, p.previous.end),
+            cells: (sc) => {
+              const t = tm(sc);
+              return ["fl-prev", formatPct(t.previous.pct), `${t.previous.matching} of ${t.previous.total}`];
+            },
+          },
+          {
+            label: "Change",
+            detail: "percentage points",
+            cells: (sc) => {
+              const c = tm(sc).change;
+              if (c.status === "none") return ["fl-change", "No comparison yet", "an empty period"];
+              if (c.status === "insufficient") return ["fl-change", "Not assessed", `fewer than ${MIN_SAMPLE_FOR_DIRECTION} posts`];
+              return ["fl-change", `${formatPp(c.pp!)} pp`, c.direction === "flat" ? "about the same" : c.direction!];
+            },
+          },
+          {
+            label: "Repeated sources",
+            detail: "top 2 authors",
+            cells: (sc) => {
+              const r = tm(sc).repeated;
+              if (r.topicExposures === 0) return ["fl-repeated", "—", "no topic posts"];
+              if (r.knownAuthorExposures === 0) return ["fl-repeated", "Unavailable", "no author handles"];
+              const authors = `${r.distinctKnownAuthors} author${r.distinctKnownAuthors === 1 ? "" : "s"}`;
+              const coverage = r.fullCoverage ? "" : ` · ${r.knownAuthorExposures}/${r.topicExposures} known`;
+              return ["fl-repeated", formatPct(r.pct), `${r.topTwoExposures} of ${r.topicExposures} · ${authors}${coverage}`];
+            },
+          },
+        ],
+        scopes,
       ),
     );
-    s.append(h("p", { class: "sentence", "data-testid": "fl-sentence" }, interpretTopic(t, def.phrase)));
+    const partial = periodNotes(p);
+    if (partial) s.append(partial);
+    for (const sc of scopes) {
+      s.append(h("p", { class: "sentence", "data-testid": `fl-sentence-${sc.key}` }, interpretTopic(tm(sc), def.phrase, sc.noun)));
+    }
     return s;
   }
 
-  private unknownSection(m: PanelMetrics): HTMLElement {
+  private unknownSection(scopes: Scope[]): HTMLElement {
+    const p = scopes[1]!.m;
     const s = h("section", { "data-testid": "fl-metrics" });
-    s.append(h("h3", {}, "Your feed"));
+    s.append(h("h3", {}, `Your feed · ${periodLabel(p.current)}`));
     s.append(
-      h(
-        "div",
-        { class: "metric" },
-        h("span", { class: "name" }, "Recorded posts"),
-        h("span", { class: "value", "data-testid": "fl-total-current" }, formatInt(m.currentTotal)),
-        h("span", { class: "detail" }, `${DENOMINATOR} · ${periodLabel(m.current)}`),
-        periodNote(m.current),
+      this.table(
+        [
+          {
+            label: "Recorded posts",
+            detail: "last 7 days",
+            cells: (sc) => ["fl-total", formatInt(sc.m.currentTotal), `previous: ${sc.m.previousTotal}`],
+          },
+          {
+            label: "No catalog topic",
+            detail: "last 7 days",
+            cells: (sc) => [
+              "fl-unmatched",
+              sc.m.currentTotal ? formatPct((sc.m.unmatchedCurrent / sc.m.currentTotal) * 100) : "—",
+              `${sc.m.unmatchedCurrent} of ${sc.m.currentTotal}`,
+            ],
+          },
+        ],
+        scopes,
       ),
     );
-    s.append(h("p", { class: "sentence", "data-testid": "fl-sentence" }, interpretUnknown(m)));
+    const partial = periodNotes(p);
+    if (partial) s.append(partial);
+    s.append(h("p", { class: "sentence", "data-testid": "fl-sentence-unknown" }, "This post matched no catalog topic."));
+    for (const sc of scopes) {
+      s.append(h("p", { class: "sentence", "data-testid": `fl-sentence-${sc.key}` }, interpretUnknown(sc.m, sc.noun)));
+    }
     return s;
   }
 
@@ -401,21 +444,45 @@ export class FeedPanel {
     return s;
   }
 
-  private whySection(m: PanelMetrics, t: TopicMetrics | undefined): HTMLElement {
+  private whySection(scopes: Scope[]): HTMLElement {
     const args = this.args!;
+    const [langScope, allScope] = scopes as [Scope, Scope];
+    const lang = this.metrics!.lang;
     const d = h("details", { "data-testid": "fl-why" });
     d.append(h("summary", {}, "Why this result?"));
     const match = args.classification.matches.find((x) => x.topicId === this.selected);
+    d.append(
+      h(
+        "p",
+        { "data-testid": "fl-post-language" },
+        h("strong", {}, "Post language: "),
+        `${langScope.header} (from X's own language tag). The first column only counts posts X tagged with the same language; ` +
+          "the second counts every recorded post.",
+      ),
+    );
     if (match) {
+      const def = topicById(match.topicId)!;
       d.append(h("p", {}, h("strong", {}, "Matched terms in this post: "), match.matchedTerms.join(", ")));
-      d.append(h("p", {}, h("strong", {}, "Inclusion rule: "), topicById(match.topicId)!.rule));
+      d.append(h("p", {}, h("strong", {}, "Inclusion rule: "), def.rule));
+      // Tool names are the same word in most languages; only the claim depends on local vocabulary.
+      if (def.kind === "claim" && lang !== "en" && lang !== "und" && !def.vocabularyLanguages.includes(lang)) {
+        d.append(
+          h(
+            "p",
+            { class: "note", "data-testid": "fl-vocab-note" },
+            `No dedicated ${langScope.header} vocabulary for this topic: only language-independent terms (such as the Latin name) ` +
+              `can match, so the ${langScope.header} share may be undercounted.`,
+          ),
+        );
+      }
     } else {
       d.append(
         h(
           "p",
           { "data-testid": "fl-coverage" },
           h("strong", {}, "Coverage: "),
-          `The bundled catalog (v${CATALOG_VERSION}) recognizes ${TOPICS.length} topics: ${TOPICS.map((x) => x.label).join(", ")}. ` +
+          `The bundled catalog (v${CATALOG_VERSION}) recognizes ${TOPICS.length} topics: ${TOPICS.map((x) => x.label).join(", ")}, ` +
+            `with vocabulary for English and ${[...new Set(TOPICS.flatMap((x) => x.vocabularyLanguages))].map(languageName).join(", ")}. ` +
             "This post matched none of them. Unmatched posts still count in the denominator, so shares for catalog topics stay honest.",
         ),
       );
@@ -425,9 +492,9 @@ export class FeedPanel {
         "p",
         {},
         h("strong", {}, "Counted as an exposure: "),
-        "an English text post on your For you timeline with at least half of it (or half the screen height, for tall posts) visible " +
-          "for one continuous second while the tab is visible. Ads, media-only posts, non-English posts, quoted cards and other pages " +
-          "are excluded. Each post counts once per tab session.",
+        "a text post in any language on your For you timeline with at least half of it (or half the screen height, for tall posts) " +
+          "visible for one continuous second while the tab is visible. Ads, media-only posts, quoted cards and other pages are excluded. " +
+          "Each post counts once per tab session.",
       ),
     );
     d.append(
@@ -435,12 +502,29 @@ export class FeedPanel {
         "p",
         { "data-testid": "fl-sample" },
         h("strong", {}, "Recorded sample: "),
-        `${m.currentTotal} ${DENOMINATOR} in the last 7 days, ${m.previousTotal} in the previous 7 days ` +
-          `(${m.retainedTotal} kept in the last ${RETENTION_DAYS} days of local history).`,
+        `${langScope.header}: ${langScope.m.currentTotal} posts in the last 7 days, ${langScope.m.previousTotal} in the previous 7 days. ` +
+          `All languages: ${allScope.m.currentTotal} and ${allScope.m.previousTotal} ` +
+          `(${allScope.m.retainedTotal} kept in the last ${RETENTION_DAYS} days of local history).`,
       ),
     );
+    const t = this.selected ? allScope.m.topics.find((x) => x.topicId === this.selected) : undefined;
+    if (t) {
+      for (const sc of scopes) {
+        const r = sc.m.topics.find((x) => x.topicId === this.selected)!.repeated;
+        if (r.topAuthors.length === 0) continue;
+        d.append(
+          h(
+            "p",
+            { "data-testid": `fl-authors-${sc.key}` },
+            h("strong", {}, `Most frequent authors (${sc.header}): `),
+            r.topAuthors.map((a) => `@${a.author} (${a.count})`).join(", ") +
+              (r.fullCoverage ? "" : `. Author known for ${r.knownAuthorExposures} of ${r.topicExposures} posts; unknown authors are not attributed.`),
+          ),
+        );
+      }
+    }
     if (t && t.evidence.length > 0) {
-      d.append(h("p", {}, h("strong", {}, "Contributing posts (most recent):")));
+      d.append(h("p", {}, h("strong", {}, "Contributing posts (most recent, all languages):")));
       const ul = h("ul", { class: "evidence", "data-testid": "fl-evidence" });
       for (const e of t.evidence) ul.append(evidenceItem(e));
       d.append(ul);
@@ -455,7 +539,13 @@ function periodLabel(p: PeriodInfo): string {
   return `${formatPeriod(p.start, p.end)}${p.ongoing ? " (to date)" : ""}`;
 }
 
-function periodNote(p: PeriodInfo): HTMLElement | null {
+function periodNotes(m: PanelMetrics): HTMLElement | null {
+  const notes = [periodNote(m.current, "Last 7 days"), periodNote(m.previous, "Previous 7 days")].filter(Boolean) as string[];
+  if (notes.length === 0) return null;
+  return h("p", { class: "note small", "data-testid": "fl-partial" }, notes.join(" "));
+}
+
+function periodNote(p: PeriodInfo, which: string): string | null {
   if (!p.partial) return null;
   const parts: string[] = [];
   if (p.observedFrom > p.start) {
@@ -466,7 +556,7 @@ function periodNote(p: PeriodInfo): HTMLElement | null {
     );
   }
   if (p.pausedDuring) parts.push("recording was paused for part of it");
-  return h("span", { class: "detail note", "data-testid": "fl-partial" }, `Partial period: ${parts.join("; ")}.`);
+  return `${which} is a partial period: ${parts.join("; ")}.`;
 }
 
 function evidenceItem(e: ExposureLike): HTMLElement {
@@ -474,7 +564,11 @@ function evidenceItem(e: ExposureLike): HTMLElement {
   return h(
     "li",
     {},
-    h("div", { class: "meta" }, `${e.author ? `@${e.author}` : "Unknown author"} · seen ${formatDateTime(e.ts)}`),
+    h(
+      "div",
+      { class: "meta" },
+      `${e.author ? `@${e.author}` : "Unknown author"} · ${languageName(langOf(e))} · seen ${formatDateTime(e.ts)}`,
+    ),
     h("div", {}, e.excerpt ?? ""),
     h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, "Open on X"),
   );

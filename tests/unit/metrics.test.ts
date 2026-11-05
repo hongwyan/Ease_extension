@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { formatPct, formatPeriod, formatPp } from "../../src/shared/format";
-import { interpretTopic, interpretUnknown } from "../../src/shared/interpret";
+import { ALL_LANGUAGES_NOUN, interpretTopic, interpretUnknown } from "../../src/shared/interpret";
 import {
   addLocalDays,
   change,
+  computeScopedMetrics,
   comparisonPeriods,
   computePanelMetrics,
   repeatedSources,
@@ -147,6 +148,49 @@ describe("unknown topics", () => {
   it("cold start has an empty denominator", () => {
     const m = computePanelMetrics([], ["chatgpt"], NOW, null);
     expect(m.topics[0]!.change.status).toBe("none");
-    expect(interpretTopic(m.topics[0]!, "mentioned ChatGPT")).toMatch(/No eligible English text posts/);
+    expect(interpretTopic(m.topics[0]!, "mentioned ChatGPT")).toMatch(/No eligible posts have been recorded/);
+  });
+});
+
+describe("language scopes", () => {
+  const withLang = (rs: ExposureLike[], lang: string | undefined) =>
+    rs.map((r) => ({ ...r, statusId: `${lang}-${r.statusId}`, ...(lang ? { lang } : {}) }));
+  const history = [
+    ...withLang(rows(80, 12, -2), undefined), // legacy rows (no lang) count as English
+    ...withLang(rows(20, 10, -1), "ja"),
+    ...withLang(rows(75, 3, -9), "en"),
+    ...withLang(rows(25, 5, -10), "ja"),
+  ];
+
+  it("computes the same metrics within the post's language and across all languages", () => {
+    const ja = computeScopedMetrics(history, ["chatgpt"], "ja", NOW, 0);
+    expect(ja.lang).toBe("ja");
+    const l = ja.language.topics[0]!;
+    const a = ja.all.topics[0]!;
+    expect(l.current).toMatchObject({ matching: 10, total: 20 });
+    expect(l.previous).toMatchObject({ matching: 5, total: 25 });
+    expect(formatPp(l.change.pp!)).toBe("+30");
+    expect(a.current).toMatchObject({ matching: 22, total: 100 });
+    expect(a.previous).toMatchObject({ matching: 8, total: 100 });
+    expect(formatPp(a.change.pp!)).toBe("+14");
+    expect(interpretTopic(l, "mentioned ChatGPT", "Japanese posts")).toBe(
+      "10 of 20 recorded Japanese posts (50%) in the last 7 days mentioned ChatGPT, up from 5 of 25 (20%) in the previous 7 days.",
+    );
+    expect(interpretTopic(a, "mentioned ChatGPT", ALL_LANGUAGES_NOUN)).toMatch(
+      /^22 of 100 recorded posts across all languages \(22%\)/,
+    );
+  });
+
+  it("treats rows recorded before language tracking as English", () => {
+    const en = computeScopedMetrics(history, ["chatgpt"], "en", NOW, 0);
+    expect(en.language.topics[0]!.current).toMatchObject({ matching: 12, total: 80 });
+    expect(en.language.topics[0]!.previous).toMatchObject({ matching: 3, total: 75 });
+  });
+
+  it("a language with no recorded posts has no comparison but all-language numbers remain", () => {
+    const ko = computeScopedMetrics(history, ["chatgpt"], "ko", NOW, 0);
+    expect(ko.language.currentTotal).toBe(0);
+    expect(ko.language.topics[0]!.change.status).toBe("none");
+    expect(ko.all.currentTotal).toBe(100);
   });
 });

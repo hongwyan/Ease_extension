@@ -60,6 +60,15 @@ section { border-top: 1px solid var(--fl-border); padding: 10px 0; }
 .metric .detail { grid-column: 1 / -1; color: var(--fl-muted); font-size: 12px; }
 .note { color: var(--fl-warn); font-size: 12px; }
 .muted { color: var(--fl-muted); font-size: 12px; }
+table.scopes { width: 100%; border-collapse: collapse; margin: 4px 0 6px; font-variant-numeric: tabular-nums; }
+table.scopes th, table.scopes td { padding: 5px 4px; vertical-align: top; text-align: right; border-top: 1px solid var(--fl-border); }
+table.scopes thead th { border-top: 0; font-size: 12px; color: var(--fl-muted); font-weight: 700; }
+table.scopes tbody th { text-align: left; font-weight: 600; width: 34%; }
+table.scopes .value { display: block; font-weight: 700; font-size: 14px; }
+table.scopes .value.word { font-size: 12px; line-height: 16px; }
+table.scopes .sub { display: block; color: var(--fl-muted); font-size: 11px; font-weight: 400; line-height: 14px; }
+.small { font-size: 12px; margin: 4px 0; }
+.sentence + .sentence { margin-top: 6px; }
 .sentence { margin: 8px 0 0; padding: 8px 10px; background: var(--fl-soft); border-radius: 10px; }
 details summary { cursor: pointer; font-weight: 600; }
 ul { margin: 6px 0; padding-left: 18px; }

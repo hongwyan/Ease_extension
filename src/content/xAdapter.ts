@@ -5,6 +5,8 @@
  * `npm run test:e2e`.
  */
 
+import { normalizeLang } from "../shared/language";
+
 export const SELECTORS = {
   primaryColumn: '[data-testid="primaryColumn"]',
   /** The Home timeline region inside the primary column. */
@@ -127,27 +129,22 @@ function visibleText(el: HTMLElement): string {
   return t.replace(/\s+/g, " ").trim();
 }
 
-export type Ineligible =
-  | "ad"
-  | "no-permalink"
-  | "media-only"
-  | "not-english"
-  | "language-unknown";
+export type Ineligible = "ad" | "no-permalink" | "media-only";
 
 export interface PostInfo {
   statusId: string | null;
   author: string | null;
   text: string;
-  lang: string | null;
+  /** Normalized post language ("en", "ja", … or "und"), from X's own `lang` attribute. */
+  lang: string;
   hasQuote: boolean;
   eligible: boolean;
   ineligibleReason: Ineligible | null;
 }
 
 /**
- * Language: X annotates post text with a `lang` attribute (its own detector).
- * Only lang="en" (or en-*) is eligible; "und", "qme" (emoji), "zxx" etc. and
- * missing attributes are excluded.
+ * Any language is eligible. The language is X's own `lang` attribute on the
+ * post text, normalized by `normalizeLang` ("qme", "zxx", missing… → "und").
  */
 export function extractPost(post: HTMLElement): PostInfo {
   const link = outerPermalink(post);
@@ -155,14 +152,12 @@ export function extractPost(post: HTMLElement): PostInfo {
     (el) => !isInQuotedMaterial(el, post),
   );
   const text = textEl ? visibleText(textEl) : "";
-  const lang = textEl?.getAttribute("lang")?.toLowerCase() ?? null;
+  const lang = normalizeLang(textEl?.getAttribute("lang"));
   const hasQuote = [...post.querySelectorAll(SELECTORS.postText)].some((el) => isInQuotedMaterial(el, post));
   let reason: Ineligible | null = null;
   if (isAd(post)) reason = "ad";
   else if (!link) reason = "no-permalink";
   else if (!text) reason = "media-only";
-  else if (!lang) reason = "language-unknown";
-  else if (lang !== "en" && !lang.startsWith("en-")) reason = "not-english";
   return {
     statusId: link?.statusId ?? null,
     author: link?.author ?? null,
